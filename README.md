@@ -21,6 +21,12 @@ or affiliation with DeepSeek.
 - Automatic local port selection to avoid conflicts
 - Shared upstream configuration, credentials, sessions, and plugins in `~/.dsh`
 - Bundled runtime telemetry disabled by the desktop launcher
+- Menu-bar tray residency: closing a window hides to the tray (show / new window / quit)
+- Single-instance lock: a second launch focuses the running instance
+- Automatic backend restart with exponential backoff, plus a native error dialog after repeated failures
+- Multi-window, multi-session: each window is an independent session
+- Windows follow the system dark/light appearance
+- Loads `DEEPSEEK_*` environment variables (e.g. `DEEPSEEK_API_KEY`) from the login shell at startup, so Finder launches still find the token; inherited environment takes precedence
 
 ## Requirements
 

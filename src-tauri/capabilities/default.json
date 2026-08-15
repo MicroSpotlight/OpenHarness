@@ -1,6 +1,6 @@
 {
   "identifier": "default",
   "description": "Default capability for the OpenHarness window",
-  "windows": ["main"],
-  "permissions": ["core:default"]
+  "windows": ["main", "session-*"],
+  "permissions": ["core:default", "dialog:default"]
 }
