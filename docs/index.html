@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta
+      name="description"
+      content="OpenHarness 是由 MicroSpotlight 独立开发的原生 macOS AI Agent 应用，内置开源 DeepSeek Harness 运行环境。"
+    >
+    <meta name="theme-color" content="#f4f6f8">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="OpenHarness">
+    <meta
+      property="og:description"
+      content="在原生 macOS 窗口中启动完整、可组合、可追溯的 AI Agent 工作空间。"
+    >
+    <meta
+      property="og:image"
+      content="https://openharness.microspotlight.team/assets/app-home.png"
+    >
+    <meta property="og:url" content="https://openharness.microspotlight.team/">
+    <link rel="canonical" href="https://openharness.microspotlight.team/">
+    <link rel="icon" type="image/png" href="assets/app-icon.png">
+    <link rel="apple-touch-icon" href="assets/app-icon.png">
+    <link rel="stylesheet" href="styles.css">
+    <title>OpenHarness</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main" data-i18n="skip">跳到主要内容</a>
+
+    <header class="site-header" data-header>
+      <div class="nav-shell">
+        <a class="brand" href="#top" aria-label="OpenHarness">
+          <img src="assets/app-icon.png" alt="" width="34" height="34">
+          <span class="brand-name">OpenHarness</span>
+        </a>
+
+        <nav class="desktop-nav" aria-label="主导航" data-i18n-aria="navLabel">
+          <a href="#experience" data-i18n="navExperience">桌面体验</a>
+          <a href="#capabilities" data-i18n="navCapabilities">能力</a>
+          <a href="#how-it-works" data-i18n="navHow">运行方式</a>
+          <a href="#faq" data-i18n="navFaq">常见问题</a>
+        </nav>
+
+        <div class="nav-actions">
+          <button class="language-toggle" type="button" data-language aria-label="Switch to English">
+            <span aria-hidden="true">中</span>
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            <span aria-hidden="true">EN</span>
+          </button>
+          <a
+            class="icon-button"
+            href="https://github.com/MicroSpotlight/OpenHarness"
+            target="_blank"
+            rel="noreferrer"
+            aria-label="OpenHarness GitHub"
+            title="OpenHarness GitHub"
+          >
+            <i data-lucide="github" aria-hidden="true"></i>
+          </a>
+          <button
+            class="icon-button menu-button"
+            type="button"
+            data-menu-button
+            aria-expanded="false"
+            aria-controls="mobile-menu"
+            aria-label="打开菜单"
+            data-i18n-aria="openMenu"
+          >
+            <i data-lucide="menu" aria-hidden="true"></i>
+          </button>
+        </div>
+      </div>
+
+      <nav class="mobile-nav" id="mobile-menu" data-mobile-menu aria-label="移动端导航" data-i18n-aria="mobileNavLabel">
+        <a href="#experience" data-i18n="navExperience">桌面体验</a>
+        <a href="#capabilities" data-i18n="navCapabilities">能力</a>
+        <a href="#how-it-works" data-i18n="navHow">运行方式</a>
+        <a href="#faq" data-i18n="navFaq">常见问题</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top">
+        <div class="hero-grid" aria-hidden="true"></div>
+        <div class="hero-shell">
+          <div class="hero-copy">
+            <div class="eyebrow">
+              <span class="status-dot"></span>
+              <span data-i18n="heroEyebrow">原生 macOS AI Agent 应用</span>
+            </div>
+            <h1>
+              <span data-i18n="heroTitleTop">OpenHarness</span>
+              <span class="accent-line" data-i18n="heroTitleBottom">让 Harness 原生运行。</span>
+            </h1>
+            <p class="hero-lede" data-i18n="heroLede">
+              无需单独安装 Node.js 或输入启动命令。打开原生窗口，直接进入完整、可组合、可追溯的 Agent 工作空间。
+            </p>
+            <div class="hero-actions">
+              <a
+                class="button button-primary"
+                href="https://github.com/MicroSpotlight/OpenHarness/releases"
+                data-download-platform="darwin-aarch64"
+              >
+                <i data-lucide="download" aria-hidden="true"></i>
+                <span data-i18n="downloadAppleSilicon">下载 Apple Silicon</span>
+              </a>
+              <a
+                class="button button-secondary"
+                href="https://github.com/MicroSpotlight/OpenHarness/releases"
+                data-download-platform="darwin-x86_64"
+              >
+                <i data-lucide="download" aria-hidden="true"></i>
+                <span data-i18n="downloadIntel">下载 Intel</span>
+              </a>
+            </div>
+            <p class="release-note">
+              <span data-release-summary>macOS 15.0+ · Apple Silicon 与 Intel</span>
+            </p>
+          </div>
+
+          <figure class="product-stage" aria-label="OpenHarness 应用界面" data-i18n-aria="productStageLabel">
+            <div class="app-shadow"></div>
+            <div class="app-window">
+              <img
+                class="app-screen"
+                src="assets/app-home.png"
+                alt="OpenHarness 中运行 Agent 任务的会话界面"
+                data-i18n-alt="sessionScreenshotAlt"
+                width="2560"
+                height="1600"
+                fetchpriority="high"
+              >
+            </div>
+            <figcaption data-i18n="heroCaption">OpenHarness 原生窗口中的 DeepSeek Harness Web UI</figcaption>
+          </figure>
+        </div>
+
+        <div class="hero-facts" role="group" aria-label="产品概览" data-i18n-aria="factsLabel">
+          <div>
+            <i data-lucide="mouse-pointer-2" aria-hidden="true"></i>
+            <span class="fact-label" data-i18n="factLaunch">一次点击启动</span>
+            <span class="fact-value" data-i18n="factLaunchValue">无需手动运行命令</span>
+          </div>
+          <div>
+            <i data-lucide="hard-drive" aria-hidden="true"></i>
+            <span class="fact-label" data-i18n="factLocal">本地运行</span>
+            <span class="fact-value" data-i18n="factLocalValue">无需单独部署</span>
+          </div>
+          <div>
+            <i data-lucide="folder-sync" aria-hidden="true"></i>
+            <span class="fact-label" data-i18n="factShared">配置延续</span>
+            <span class="fact-value" data-i18n="factSharedValue">沿用已有设置</span>
+          </div>
+          <div>
+            <i data-lucide="blocks" aria-hidden="true"></i>
+            <span class="fact-label" data-i18n="factHarness">完整 Harness</span>
+            <span class="fact-value" data-i18n="factHarnessValue">插件能力保持不变</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="experience-section" id="experience">
+        <div class="section-shell experience-grid">
+          <div class="section-copy sticky-copy">
+            <p class="section-kicker" data-i18n="experienceKicker">完整 Harness 体验</p>
+            <h2 data-i18n="experienceTitle">桌面宿主，不是另一套生态。</h2>
+            <p data-i18n="experienceBody">
+              OpenHarness 将 DeepSeek Harness（DSH）完整装进原生 macOS 应用。模型、工具、技能、会话与插件保持一致，只是使用入口从命令行变成桌面窗口。
+            </p>
+            <a
+              class="text-link"
+              href="https://deepseek.com/harness"
+              target="_blank"
+              rel="noreferrer"
+            >
+              <span data-i18n="learnHarness">DeepSeek Harness 官方网站</span>
+              <i data-lucide="arrow-up-right" aria-hidden="true"></i>
+            </a>
+          </div>
+
+          <div class="experience-list">
+            <article class="experience-item">
+              <span class="item-number">01</span>
+              <div>
+                <h3 data-i18n="experienceOneTitle">开箱即用</h3>
+                <p data-i18n="experienceOneBody">
+                  DeepSeek Harness 与运行环境随 App 提供，无需另外安装 Node.js 或输入启动命令。
+                </p>
+              </div>
+            </article>
+            <article class="experience-item">
+              <span class="item-number">02</span>
+              <div>
+                <h3 data-i18n="experienceTwoTitle">原生桌面体验</h3>
+                <p data-i18n="experienceTwoBody">
+                  从 Dock 打开窗口，关闭后继续驻留菜单栏，需要时随时回到工作区。
+                </p>
+              </div>
+            </article>
+            <article class="experience-item">
+              <span class="item-number">03</span>
+              <div>
+                <h3 data-i18n="experienceThreeTitle">延续已有工作区</h3>
+                <p data-i18n="experienceThreeBody">
+                  如果已经使用 DSH，现有模型配置、会话和插件可以继续使用，无需重新开始。
+                </p>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="capabilities-section" id="capabilities">
+        <div class="section-shell">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker" data-i18n="capabilitiesKicker">完整的 Harness 能力</p>
+              <h2 data-i18n="capabilitiesTitle">一个入口，组合完整工作流。</h2>
+            </div>
+            <p data-i18n="capabilitiesBody">
+              OpenHarness 不改变 DeepSeek Harness 的能力，而是让模型、工具、技能、会话和执行环境在桌面入口中继续组合。
+            </p>
+          </div>
+
+          <div class="capability-grid">
+            <article class="capability-card">
+              <i data-lucide="brain-circuit" aria-hidden="true"></i>
+              <h3 data-i18n="capModelTitle">模型</h3>
+              <p data-i18n="capModelBody">选择、替换或扩展模型接入。</p>
+            </article>
+            <article class="capability-card">
+              <i data-lucide="wrench" aria-hidden="true"></i>
+              <h3 data-i18n="capToolsTitle">工具与技能</h3>
+              <p data-i18n="capToolsBody">让 Agent 理解环境并执行真实任务。</p>
+            </article>
+            <article class="capability-card">
+              <i data-lucide="git-fork" aria-hidden="true"></i>
+              <h3 data-i18n="capSessionsTitle">会话</h3>
+              <p data-i18n="capSessionsBody">恢复、分叉、搜索与重放同一事件流。</p>
+            </article>
+            <article class="capability-card">
+              <i data-lucide="box" aria-hidden="true"></i>
+              <h3 data-i18n="capSandboxTitle">沙箱</h3>
+              <p data-i18n="capSandboxBody">为不同任务组合可控执行环境。</p>
+            </article>
+            <article class="capability-card">
+              <i data-lucide="database" aria-hidden="true"></i>
+              <h3 data-i18n="capStorageTitle">存储</h3>
+              <p data-i18n="capStorageBody">保留工作状态与长期上下文。</p>
+            </article>
+            <article class="capability-card">
+              <i data-lucide="timer-reset" aria-hidden="true"></i>
+              <h3 data-i18n="capSchedulingTitle">循环与调度</h3>
+              <p data-i18n="capSchedulingBody">支持持续运行与多阶段 Agent 工作流。</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="how-section" id="how-it-works">
+        <div class="section-shell">
+          <div class="section-heading compact-heading">
+            <div>
+              <p class="section-kicker" data-i18n="howKicker">从下载到第一个任务</p>
+              <h2 data-i18n="howTitle">打开 App，直接开始使用。</h2>
+            </div>
+            <p data-i18n="howBody">OpenHarness 已经把 DeepSeek Harness（DSH）的 Web UI 和运行环境装进 App，你只需要完成模型与工作区设置。</p>
+          </div>
+
+          <ol class="flow-list">
+            <li>
+              <span class="flow-number">1</span>
+              <i data-lucide="app-window" aria-hidden="true"></i>
+              <div>
+                <h3 data-i18n="flowOneTitle">下载并打开</h3>
+                <p data-i18n="flowOneBody">选择适合 Mac 芯片的安装包，完成安装后直接打开 OpenHarness。</p>
+              </div>
+            </li>
+            <li>
+              <span class="flow-number">2</span>
+              <i data-lucide="key-round" aria-hidden="true"></i>
+              <div>
+                <h3 data-i18n="flowTwoTitle">配置模型</h3>
+                <p data-i18n="flowTwoBody">在“设置 → 模型”中填写 DeepSeek API Key，也可以继续使用已有的模型配置。</p>
+              </div>
+            </li>
+            <li>
+              <span class="flow-number">3</span>
+              <i data-lucide="folder-open" aria-hidden="true"></i>
+              <div>
+                <h3 data-i18n="flowThreeTitle">选择工作区</h3>
+                <p data-i18n="flowThreeBody">添加需要处理的项目文件夹，新建会话并描述任务，后续工作都在窗口中完成。</p>
+              </div>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="open-source-section">
+        <div class="section-shell source-grid">
+          <div>
+            <p class="section-kicker" data-i18n="sourceKicker">开放、透明、可验证</p>
+            <h2 data-i18n="sourceTitle">建立在开源之上。</h2>
+          </div>
+          <div class="source-copy">
+            <p data-i18n="sourceBody">
+              OpenHarness 原创代码采用 Apache License 2.0；内置的 DeepSeek Harness 组件单独采用 MIT License。为避免品牌混淆，OpenHarness 使用独立的名称、图标、Bundle ID 和视觉主题。
+            </p>
+            <div class="source-links">
+              <a
+                class="button button-dark"
+                href="https://github.com/deepseek-ai/deepseek-harness"
+                target="_blank"
+                rel="noreferrer"
+              >
+                <i data-lucide="github" aria-hidden="true"></i>
+                <span data-i18n="deepSeekHarnessRepo">DeepSeek Harness 官方 GitHub</span>
+              </a>
+              <a
+                class="button button-light"
+                href="https://github.com/MicroSpotlight/OpenHarness"
+                target="_blank"
+                rel="noreferrer"
+              >
+                <i data-lucide="github" aria-hidden="true"></i>
+                <span data-i18n="desktopRepo">OpenHarness 仓库</span>
+              </a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="faq-section" id="faq">
+        <div class="section-shell faq-grid">
+          <div class="section-copy">
+            <p class="section-kicker" data-i18n="faqKicker">常见问题</p>
+            <h2 data-i18n="faqTitle">下载之前，你可能想知道。</h2>
+          </div>
+          <div class="faq-list">
+            <details>
+              <summary><span data-i18n="faqOneQuestion">这是 DeepSeek Harness 官方应用吗？</span><i data-lucide="plus" aria-hidden="true"></i></summary>
+              <p data-i18n="faqOneAnswer">不是。OpenHarness 由 MicroSpotlight 独立开发，使用独立的产品名称、图标、Bundle ID 和视觉主题，不暗示 DeepSeek 的认可或隶属关系。</p>
+            </details>
+            <details>
+              <summary><span data-i18n="faqTwoQuestion">OpenHarness 会把数据上传到自己的服务器吗？</span><i data-lucide="plus" aria-hidden="true"></i></summary>
+              <p data-i18n="faqTwoAnswer">OpenHarness 不提供独立云服务，也不会把数据上传到我们的服务器。模型供应商和插件可能有各自的数据处理方式，请以实际配置为准。</p>
+            </details>
+            <details>
+              <summary><span data-i18n="faqThreeQuestion">会覆盖现有的命令行配置吗？</span><i data-lucide="plus" aria-hidden="true"></i></summary>
+              <p data-i18n="faqThreeAnswer">不会创建另一套配置目录。OpenHarness 复用 ~/.dsh，因此已有模型凭据、会话与插件可继续使用。</p>
+            </details>
+            <details>
+              <summary><span data-i18n="faqFourQuestion">目前支持哪些平台？</span><i data-lucide="plus" aria-hidden="true"></i></summary>
+              <p data-i18n="faqFourAnswer">OpenHarness 支持 macOS 15.0 或更高版本，分别提供 Apple Silicon arm64 与 Intel x64 原生构建。</p>
+            </details>
+            <details>
+              <summary><span data-i18n="faqFiveQuestion">如何选择下载架构？</span><i data-lucide="plus" aria-hidden="true"></i></summary>
+              <p data-i18n="faqFiveAnswer">Apple M 系列芯片选择 arm64；Intel 处理器选择 x64。发布页会分别提供两个安装包。</p>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <section class="final-cta">
+        <div class="cta-grid" aria-hidden="true"></div>
+        <div class="section-shell cta-content">
+          <img src="assets/app-icon.png" alt="" width="76" height="76">
+          <p class="section-kicker" data-i18n="ctaKicker">OpenHarness</p>
+          <h2 data-i18n="ctaTitle">让下一次 Harness 运行，从桌面开始。</h2>
+          <div class="hero-actions centered-actions">
+            <a
+              class="button button-primary"
+              href="https://github.com/MicroSpotlight/OpenHarness/releases"
+              data-download-platform="darwin-aarch64"
+            >
+              <i data-lucide="download" aria-hidden="true"></i>
+              <span data-i18n="downloadAppleSilicon">下载 Apple Silicon</span>
+            </a>
+            <a
+              class="button button-ghost-light"
+              href="https://github.com/MicroSpotlight/OpenHarness/releases"
+              data-download-platform="darwin-x86_64"
+            >
+              <i data-lucide="download" aria-hidden="true"></i>
+              <span data-i18n="downloadIntel">下载 Intel</span>
+            </a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-shell">
+        <div class="footer-brand">
+          <img src="assets/app-icon.png" alt="" width="30" height="30">
+          <span>OpenHarness</span>
+        </div>
+        <div class="footer-links">
+          <a href="https://github.com/MicroSpotlight/OpenHarness" target="_blank" rel="noreferrer">OpenHarness GitHub</a>
+          <a href="https://deepseek.com/harness" target="_blank" rel="noreferrer" data-i18n="deepSeekHarnessWebsite">DeepSeek Harness 官方网站</a>
+          <a href="https://github.com/MicroSpotlight/OpenHarness/blob/main/LICENSE" target="_blank" rel="noreferrer" data-i18n="license">许可证</a>
+        </div>
+        <p class="footer-note" data-i18n="footerNote">
+          OpenHarness 由 MicroSpotlight 独立开发。为避免与 DeepSeek 品牌混淆，项目使用独立的产品名称、图标、Bundle ID 和视觉主题，不暗示获得 DeepSeek 认可或与 DeepSeek 存在隶属关系。
+        </p>
+        <p class="copyright">© <span data-year></span> MicroSpotlight.</p>
+      </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
+    <script src="site.js" defer></script>
+  </body>
+</html>

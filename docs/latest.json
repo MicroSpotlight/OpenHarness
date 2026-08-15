@@ -1,0 +1,18 @@
+{
+  "version": "0.1.0-beta.0",
+  "pub_date": "2026-08-15T16:24:07Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "url": "https://github.com/MicroSpotlight/OpenHarness/releases/download/v0.1.0-beta.0/OpenHarness_0.1.0_arm64.dmg",
+      "name": "OpenHarness_0.1.0_arm64.dmg",
+      "sha256": "db502745c9d188b739244751efba4bccbb7438378c70919966f11204e681e14a",
+      "size": 120889330
+    },
+    "darwin-x86_64": {
+      "url": "https://github.com/MicroSpotlight/OpenHarness/releases/download/v0.1.0-beta.0/OpenHarness_0.1.0_x64.dmg",
+      "name": "OpenHarness_0.1.0_x64.dmg",
+      "sha256": "da53c57a092ab6c0a107dc32c8108be0e686ba0f6ed3862d808aa640503559ff",
+      "size": 125167306
+    }
+  }
+}

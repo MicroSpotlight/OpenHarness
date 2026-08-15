@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://openharness.microspotlight.team/sitemap.xml
