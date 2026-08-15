@@ -1,0 +1,282 @@
+name: Release macOS
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-macos-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate-version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Validate application version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tauri_version="$(jq -r '.version' src-tauri/tauri.conf.json)"
+          package_version="$(jq -r '.version' package.json)"
+          cargo_version="$(awk '
+            /^\[package\]$/ { in_package = 1; next }
+            /^\[/ { in_package = 0 }
+            in_package && /^version = / {
+              gsub(/version = |\"/, "")
+              print
+              exit
+            }
+          ' src-tauri/Cargo.toml)"
+
+          if [[ "${tauri_version}" != "${package_version}" ]]; then
+            echo "Version mismatch: Tauri=${tauri_version}, package=${package_version}" >&2
+            exit 1
+          fi
+          if [[ "${tauri_version}" != "${cargo_version}" ]]; then
+            echo "Version mismatch: Tauri=${tauri_version}, Cargo=${cargo_version}" >&2
+            exit 1
+          fi
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" != "v${tauri_version}" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} must match application version v${tauri_version}" >&2
+            exit 1
+          fi
+
+          echo "version=${tauri_version}" >> "${GITHUB_OUTPUT}"
+
+  build-macos:
+    needs: validate-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            artifact_arch: arm64
+            expected_arch: arm64
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            artifact_arch: x64
+            expected_arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.2.6
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust build output
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install project dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Assemble bundled DSH runtime
+        run: ./setup-runtime.sh
+
+      - name: Verify runtime architecture
+        env:
+          EXPECTED_ARCH: ${{ matrix.expected_arch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime_archs="$(lipo -archs src-tauri/runtime/node)"
+          if [[ " ${runtime_archs} " != *" ${EXPECTED_ARCH} "* ]]; then
+            echo "Bundled Node architecture ${runtime_archs} does not include ${EXPECTED_ARCH}" >&2
+            exit 1
+          fi
+
+      - name: Import Developer ID certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${APPLE_CERTIFICATE}" || -z "${APPLE_CERTIFICATE_PASSWORD}" ]]; then
+            echo "APPLE_CERTIFICATE and APPLE_CERTIFICATE_PASSWORD are required" >&2
+            exit 1
+          fi
+
+          certificate_path="${RUNNER_TEMP}/developer-id.p12"
+          keychain_path="${RUNNER_TEMP}/release-signing.keychain-db"
+          keychain_password="$(openssl rand -base64 32)"
+          echo "::add-mask::${keychain_password}"
+
+          printf '%s' "${APPLE_CERTIFICATE}" | openssl base64 -d -A -out "${certificate_path}"
+          security create-keychain -p "${keychain_password}" "${keychain_path}"
+          security set-keychain-settings -lut 21600 "${keychain_path}"
+          security unlock-keychain -p "${keychain_password}" "${keychain_path}"
+          security import "${certificate_path}" \
+            -k "${keychain_path}" \
+            -P "${APPLE_CERTIFICATE_PASSWORD}" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "${keychain_password}" \
+            "${keychain_path}"
+          security default-keychain -d user -s "${keychain_path}"
+
+          identities_path="${RUNNER_TEMP}/developer-id-identities.txt"
+          security find-identity -v -p codesigning "${keychain_path}" \
+            | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' \
+            > "${identities_path}"
+          identity_count="$(wc -l < "${identities_path}" | tr -d ' ')"
+          if [[ "${identity_count}" != "1" ]]; then
+            echo "Expected exactly one valid Developer ID Application identity; found ${identity_count}" >&2
+            exit 1
+          fi
+
+          signing_identity="$(head -n 1 "${identities_path}")"
+          echo "APPLE_SIGNING_IDENTITY=${signing_identity}" >> "${GITHUB_ENV}"
+          echo "SIGNING_KEYCHAIN_PATH=${keychain_path}" >> "${GITHUB_ENV}"
+          rm -f "${certificate_path}" "${identities_path}"
+
+      - name: Configure App Store Connect API key
+        env:
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${APPLE_API_PRIVATE_KEY}" || -z "${APPLE_API_KEY}" || -z "${APPLE_API_ISSUER}" ]]; then
+            echo "APPLE_API_PRIVATE_KEY, APPLE_API_KEY, and APPLE_API_ISSUER are required" >&2
+            exit 1
+          fi
+
+          api_key_path="${RUNNER_TEMP}/AuthKey_${APPLE_API_KEY}.p8"
+          printf '%s' "${APPLE_API_PRIVATE_KEY}" > "${api_key_path}"
+          chmod 600 "${api_key_path}"
+          openssl pkey -in "${api_key_path}" -check -noout >/dev/null
+          echo "APPLE_API_KEY_PATH=${api_key_path}" >> "${GITHUB_ENV}"
+
+      - name: Sign bundled native runtime
+        run: ./scripts/sign-macos-runtime.sh
+
+      - name: Build, sign, and notarize application
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: >-
+          bun run tauri build
+          --target ${{ matrix.target }}
+          --bundles app,dmg
+          --ci
+
+      - name: Notarize and staple DMG
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle_root="src-tauri/target/${{ matrix.target }}/release/bundle"
+          app_path="${bundle_root}/macos/DeepSeek Harness.app"
+          dmg_path="$(find "${bundle_root}/dmg" -maxdepth 1 -type f -name '*.dmg' -print -quit)"
+
+          if [[ ! -d "${app_path}" || -z "${dmg_path}" ]]; then
+            echo "Expected signed .app and .dmg artifacts were not produced" >&2
+            exit 1
+          fi
+
+          codesign --verify --deep --strict --verbose=2 "${app_path}"
+          xcrun stapler validate "${app_path}"
+          spctl --assess --type execute --verbose=2 "${app_path}"
+
+          xcrun notarytool submit "${dmg_path}" \
+            --key "${APPLE_API_KEY_PATH}" \
+            --key-id "${APPLE_API_KEY}" \
+            --issuer "${APPLE_API_ISSUER}" \
+            --wait \
+            --timeout 1h
+          xcrun stapler staple "${dmg_path}"
+          xcrun stapler validate "${dmg_path}"
+          codesign --verify --strict --verbose=2 "${dmg_path}"
+          spctl --assess --type open --context context:primary-signature --verbose=2 "${dmg_path}"
+
+          mkdir -p dist/macos
+          release_dmg="dist/macos/DeepSeek-Harness_${{ needs.validate-version.outputs.version }}_${{ matrix.artifact_arch }}.dmg"
+          cp "${dmg_path}" "${release_dmg}"
+          shasum -a 256 "${release_dmg}" > "${release_dmg}.sha256"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-${{ matrix.artifact_arch }}
+          path: dist/macos/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove temporary signing keychain
+        if: always()
+        shell: bash
+        run: |
+          if [[ -n "${SIGNING_KEYCHAIN_PATH:-}" && -f "${SIGNING_KEYCHAIN_PATH}" ]]; then
+            security delete-keychain "${SIGNING_KEYCHAIN_PATH}" || true
+          fi
+
+  publish-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - validate-version
+      - build-macos
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download signed macOS artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: macos-*
+          path: dist/macos
+          merge-multiple: true
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t assets < <(find dist/macos -maxdepth 1 -type f -print | sort)
+          if [[ "${#assets[@]}" -ne 4 ]]; then
+            echo "Expected two DMGs and two SHA-256 files; found ${#assets[@]} files" >&2
+            exit 1
+          fi
+
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" "${assets[@]}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --verify-tag \
+              --prerelease \
+              --title "DeepSeek Harness ${GITHUB_REF_NAME}" \
+              --generate-notes
+          fi

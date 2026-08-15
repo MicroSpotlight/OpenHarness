@@ -57,17 +57,25 @@ fn resolve_runtime(resource_dir: &Path) -> Result<(PathBuf, PathBuf), String> {
 
 /// Spawn the DSH web server and block until it reports its canonical URL.
 fn spawn_dsh(resource_dir: &Path, home: &Path) -> Result<(Child, Url), Box<dyn std::error::Error>> {
-    let (node, bin) =
-        resolve_runtime(resource_dir).map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e))?;
+    let (node, bin) = resolve_runtime(resource_dir)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e))?;
 
     let mut child = Command::new(node)
         .arg(bin)
         .args(["web", "--port", "0"])
+        // Keep the bundled rc runtime aligned with upstream's current
+        // default-off telemetry policy.
+        .env("DSH_TELEMETRY_DISABLED", "1")
         .current_dir(home)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("failed to spawn dsh: {e}")))?;
+        .map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("failed to spawn dsh: {e}"),
+            )
+        })?;
 
     let stdout = child.stdout.take().expect("stdout was piped");
     let stderr = child.stderr.take().expect("stderr was piped");
