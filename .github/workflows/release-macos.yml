@@ -19,6 +19,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
+      manifest_version: ${{ steps.version.outputs.manifest_version }}
       build_number: ${{ steps.version.outputs.build_number }}
       prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
@@ -43,7 +44,6 @@ jobs:
           ' src-tauri/Cargo.toml)"
 
           code_version_pattern='^([0-9]+)\.([0-9]+)\.([0-9]+)$'
-          tag_version_pattern='^([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
           if [[ ! "${tauri_version}" =~ ${code_version_pattern} ]]; then
             echo "Application version ${tauri_version} must include major, minor, and patch numbers" >&2
             exit 1
@@ -61,6 +61,7 @@ jobs:
             exit 1
           fi
 
+          manifest_version="${tauri_version}"
           tag_is_prerelease=false
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             if [[ "${GITHUB_REF_NAME}" != v* ]]; then
@@ -68,20 +69,18 @@ jobs:
               exit 1
             fi
             tag_version="${GITHUB_REF_NAME#v}"
-            if [[ ! "${tag_version}" =~ ${tag_version_pattern} ]]; then
-              echo "Tag ${GITHUB_REF_NAME} does not contain a supported release version" >&2
-              exit 1
-            fi
-            tag_major="${BASH_REMATCH[1]}"
-            tag_minor="${BASH_REMATCH[2]}"
-            tag_patch="${BASH_REMATCH[3]}"
-            if [[ -n "${BASH_REMATCH[4]:-}" ]]; then
+            node scripts/update-manifest.mjs validate-version --version "${tag_version}"
+            tag_core="${tag_version%%+*}"
+            if [[ "${tag_core}" == *-* ]]; then
               tag_is_prerelease=true
+              tag_core="${tag_core%%-*}"
             fi
+            IFS='.' read -r tag_major tag_minor tag_patch <<< "${tag_core}"
             if [[ "${tag_major}" != "${code_major}" || "${tag_minor}" != "${code_minor}" || "${tag_patch}" != "${code_patch}" ]]; then
               echo "Tag version ${tag_version} must match code version ${tauri_version}" >&2
               exit 1
             fi
+            manifest_version="${tag_version}"
           fi
 
           build_number="${GITHUB_RUN_NUMBER}"
@@ -96,6 +95,7 @@ jobs:
           fi
           {
             echo "version=${tauri_version}"
+            echo "manifest_version=${manifest_version}"
             echo "build_number=${build_number}"
             echo "prerelease=${prerelease}"
           } >> "${GITHUB_OUTPUT}"
@@ -109,10 +109,12 @@ jobs:
         include:
           - target: aarch64-apple-darwin
             artifact_arch: arm64
+            updater_arch: aarch64
             expected_arch: arm64
             runtime_cpu: arm64
           - target: x86_64-apple-darwin
             artifact_arch: x64
+            updater_arch: x86_64
             expected_arch: x86_64
             runtime_cpu: x64
     runs-on: macos-15
@@ -223,10 +225,24 @@ jobs:
       - name: Sign bundled native runtime
         run: ./scripts/sign-macos-runtime.sh
 
-      - name: Build and notarize application
+      - name: Validate updater signing credentials
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${TAURI_SIGNING_PRIVATE_KEY}" || -z "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD}" ]]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD are required" >&2
+            exit 1
+          fi
+
+      - name: Build, sign, and notarize application
         env:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: >-
           bun run tauri build
           --target ${{ matrix.target }}
@@ -243,10 +259,12 @@ jobs:
           set -euo pipefail
           bundle_root="$(pwd)/src-tauri/target/${{ matrix.target }}/release/bundle"
           app_path="${bundle_root}/macos/OpenHarness.app"
+          updater_path="${bundle_root}/macos/OpenHarness.app.tar.gz"
+          updater_signature_path="${updater_path}.sig"
           dmg_path="${bundle_root}/dmg/OpenHarness_${{ needs.validate-version.outputs.version }}_${{ matrix.artifact_arch }}.dmg"
 
-          if [[ ! -d "${app_path}" ]]; then
-            echo "Expected signed .app artifact was not produced" >&2
+          if [[ ! -d "${app_path}" || ! -s "${updater_path}" || ! -s "${updater_signature_path}" ]]; then
+            echo "Expected signed .app, updater archive, and updater signature were not produced" >&2
             exit 1
           fi
 
@@ -309,7 +327,10 @@ jobs:
 
           mkdir -p dist/macos
           release_dmg="dist/macos/OpenHarness_${{ needs.validate-version.outputs.version }}_${{ matrix.artifact_arch }}.dmg"
+          release_updater="dist/macos/OpenHarness_${{ needs.validate-version.outputs.version }}_${{ matrix.updater_arch }}.app.tar.gz"
           cp "${dmg_path}" "${release_dmg}"
+          cp "${updater_path}" "${release_updater}"
+          cp "${updater_signature_path}" "${release_updater}.sig"
           (
             cd dist/macos
             release_filename="$(basename "${release_dmg}")"
@@ -345,6 +366,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Download signed macOS artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -352,7 +376,41 @@ jobs:
           path: dist/macos
           merge-multiple: true
 
-      - name: Publish release assets
+      - name: Generate updater manifest and release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET_VERSION: ${{ needs.validate-version.outputs.version }}
+          BUILD_NUMBER: ${{ needs.validate-version.outputs.build_number }}
+          MANIFEST_VERSION: ${{ needs.validate-version.outputs.manifest_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_notes_path="${RUNNER_TEMP}/release-notes.md"
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f "tag_name=${GITHUB_REF_NAME}" \
+            --jq '.body' > "${release_notes_path}"
+
+          node scripts/update-manifest.mjs generate \
+            --version "${MANIFEST_VERSION}" \
+            --asset-version "${ASSET_VERSION}" \
+            --build-number "${BUILD_NUMBER}" \
+            --tag "${GITHUB_REF_NAME}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --pub-date "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+            --notes-file "${release_notes_path}" \
+            --aarch64-signature "dist/macos/OpenHarness_${ASSET_VERSION}_aarch64.app.tar.gz.sig" \
+            --x86-signature "dist/macos/OpenHarness_${ASSET_VERSION}_x86_64.app.tar.gz.sig" \
+            --aarch64-sha256 "dist/macos/OpenHarness_${ASSET_VERSION}_arm64.dmg.sha256" \
+            --x86-sha256 "dist/macos/OpenHarness_${ASSET_VERSION}_x64.dmg.sha256" \
+            --aarch64-dmg "dist/macos/OpenHarness_${ASSET_VERSION}_arm64.dmg" \
+            --x86-dmg "dist/macos/OpenHarness_${ASSET_VERSION}_x64.dmg" \
+            --output dist/macos/latest.json
+          node scripts/update-manifest.mjs validate --input dist/macos/latest.json
+          echo "RELEASE_NOTES_PATH=${release_notes_path}" >> "${GITHUB_ENV}"
+
+      - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           IS_PRERELEASE: ${{ needs.validate-version.outputs.prerelease }}
@@ -360,8 +418,8 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t assets < <(find dist/macos -maxdepth 1 -type f -print | sort)
-          if [[ "${#assets[@]}" -ne 4 ]]; then
-            echo "Expected two DMGs and two SHA-256 files; found ${#assets[@]} files" >&2
+          if [[ "${#assets[@]}" -ne 9 ]]; then
+            echo "Expected two DMGs, two SHA-256 files, two updater archives, two signatures, and latest.json; found ${#assets[@]} files" >&2
             exit 1
           fi
 
@@ -374,12 +432,14 @@ jobs:
               gh release edit "${GITHUB_REF_NAME}" \
                 --repo "${GITHUB_REPOSITORY}" \
                 --title "${release_title}" \
+                --notes-file "${RELEASE_NOTES_PATH}" \
                 --prerelease \
                 --latest=false
             else
               gh release edit "${GITHUB_REF_NAME}" \
                 --repo "${GITHUB_REPOSITORY}" \
                 --title "${release_title}" \
+                --notes-file "${RELEASE_NOTES_PATH}" \
                 --prerelease=false \
                 --latest
             fi
@@ -388,7 +448,7 @@ jobs:
               --repo "${GITHUB_REPOSITORY}"
               --verify-tag
               --title "${release_title}"
-              --generate-notes
+              --notes-file "${RELEASE_NOTES_PATH}"
             )
             if [[ "${IS_PRERELEASE}" == "true" ]]; then
               release_args+=(--prerelease)

@@ -8,6 +8,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::cmp::Ordering as CompareOrdering;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -15,12 +16,14 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+use semver::Version;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    Manager, RunEvent, WebviewUrl, WebviewWindowBuilder,
+    AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, Wry,
 };
-use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+use tauri_plugin_updater::UpdaterExt;
 use url::{Host, Url};
 
 /// How long to wait for the DSH server to print its URL before giving up.
@@ -29,6 +32,19 @@ const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RESTART_ATTEMPTS: u32 = 3;
 /// Runtime long enough to treat an earlier failure streak as recovered.
 const STABLE_BACKEND_UPTIME: Duration = Duration::from_secs(30);
+const UPDATE_MENU_LABEL: &str = "检查更新...";
+const UPDATE_NOTES_LIMIT: usize = 1_200;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UpdateCheckSource {
+    Automatic,
+    Manual,
+}
+
+struct AppUpdateState {
+    busy: AtomicBool,
+    menu_item: MenuItem<Wry>,
+}
 
 /// Shared backend state: the running child PID (for quit-time kill), the
 /// current canonical URL (for windows), and coordination flags.
@@ -351,6 +367,324 @@ fn show_backend_error(app: &tauri::AppHandle, err: &dyn std::fmt::Display) {
         .show(|_| {});
 }
 
+fn show_update_message(app: &AppHandle, message: impl Into<String>, kind: MessageDialogKind) {
+    app.dialog()
+        .message(message)
+        .title("OpenHarness")
+        .kind(kind)
+        .show(|_| {});
+}
+
+fn update_prompt(current_version: &str, new_version: &str, notes: Option<&str>) -> String {
+    let notes = notes.map(str::trim).filter(|notes| !notes.is_empty());
+    let notes = notes.map(|notes| {
+        let mut chars = notes.chars();
+        let truncated: String = chars.by_ref().take(UPDATE_NOTES_LIMIT).collect();
+        if chars.next().is_some() {
+            format!("{truncated}\n...")
+        } else {
+            truncated
+        }
+    });
+
+    match notes {
+        Some(notes) => format!(
+            "发现 OpenHarness {new_version}（当前版本 {current_version}）。\n\n{notes}\n\n立即下载并安装吗？安装完成后应用会自动重启。"
+        ),
+        None => format!(
+            "发现 OpenHarness {new_version}（当前版本 {current_version}）。\n\n立即下载并安装吗？安装完成后应用会自动重启。"
+        ),
+    }
+}
+
+fn download_percent(downloaded: u64, total: Option<u64>) -> Option<u8> {
+    let total = total.filter(|total| *total > 0)?;
+    Some(((downloaded.saturating_mul(100) / total).min(100)) as u8)
+}
+
+fn parse_build_number(value: &str) -> Result<Vec<u64>, String> {
+    let parts: Vec<_> = value.split('.').collect();
+    if parts.is_empty() || parts.len() > 3 {
+        return Err(format!("invalid build number {value}"));
+    }
+    parts
+        .into_iter()
+        .map(|part| {
+            if part.is_empty()
+                || !part.bytes().all(|byte| byte.is_ascii_digit())
+                || (part.len() > 1 && part.starts_with('0'))
+            {
+                return Err(format!("invalid build number {value}"));
+            }
+            part.parse::<u64>()
+                .map_err(|error| format!("invalid build number {value}: {error}"))
+        })
+        .collect()
+}
+
+fn compare_build_numbers(left: &str, right: &str) -> Result<CompareOrdering, String> {
+    let left = parse_build_number(left)?;
+    let right = parse_build_number(right)?;
+    let count = left.len().max(right.len());
+    for index in 0..count {
+        let ordering = left
+            .get(index)
+            .copied()
+            .unwrap_or(0)
+            .cmp(&right.get(index).copied().unwrap_or(0));
+        if ordering != CompareOrdering::Equal {
+            return Ok(ordering);
+        }
+    }
+    Ok(CompareOrdering::Equal)
+}
+
+fn configured_build_number(value: Option<&str>) -> Result<String, String> {
+    let value = value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "application configuration is missing bundleVersion".to_string())?;
+    let parts = parse_build_number(value)?;
+    if parts.iter().all(|part| *part == 0) {
+        return Err("application bundleVersion must be positive".to_string());
+    }
+    Ok(value.to_string())
+}
+
+fn compare_core_versions(left: &Version, right: &Version) -> CompareOrdering {
+    (left.major, left.minor, left.patch).cmp(&(right.major, right.minor, right.patch))
+}
+
+fn is_remote_update_newer(
+    current_version: &Version,
+    current_build: &str,
+    remote_version: &str,
+    remote_build: &str,
+) -> Result<bool, String> {
+    let remote_version = Version::parse(remote_version)
+        .map_err(|error| format!("invalid update version {remote_version}: {error}"))?;
+    let build_ordering = compare_build_numbers(remote_build, current_build)?;
+    match compare_core_versions(&remote_version, current_version) {
+        CompareOrdering::Greater => Ok(true),
+        CompareOrdering::Less => Ok(false),
+        CompareOrdering::Equal => Ok(build_ordering == CompareOrdering::Greater),
+    }
+}
+
+fn manifest_build_number(manifest: &serde_json::Value) -> Result<&str, String> {
+    manifest
+        .get("build_number")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "update manifest is missing build_number".to_string())
+}
+
+fn version_label(version: &str, build_number: &str) -> String {
+    format!("{version}，构建 {build_number}")
+}
+
+fn finish_update_operation(app: &AppHandle) {
+    let state = app.state::<AppUpdateState>();
+    state.busy.store(false, Ordering::SeqCst);
+    let _ = state.menu_item.set_text(UPDATE_MENU_LABEL);
+    let _ = state.menu_item.set_enabled(true);
+}
+
+fn request_update_check(app: AppHandle, source: UpdateCheckSource) {
+    if cfg!(debug_assertions) {
+        if source == UpdateCheckSource::Manual {
+            show_update_message(
+                &app,
+                "开发构建不会检查或安装正式更新。",
+                MessageDialogKind::Info,
+            );
+        }
+        return;
+    }
+
+    let state = app.state::<AppUpdateState>();
+    if state.busy.swap(true, Ordering::SeqCst) {
+        if source == UpdateCheckSource::Manual {
+            show_update_message(&app, "更新检查或安装正在进行中。", MessageDialogKind::Info);
+        }
+        return;
+    }
+    let _ = state.menu_item.set_enabled(false);
+    let _ = state.menu_item.set_text("正在检查更新...");
+
+    tauri::async_runtime::spawn(async move {
+        let current_version = app.package_info().version.clone();
+        let current_build_number =
+            match configured_build_number(app.config().bundle.macos.bundle_version.as_deref()) {
+                Ok(build_number) => build_number,
+                Err(error) => {
+                    eprintln!("[updater] {error}");
+                    if source == UpdateCheckSource::Manual {
+                        show_update_message(
+                            &app,
+                            "应用构建号配置无效，无法检查更新。",
+                            MessageDialogKind::Error,
+                        );
+                    }
+                    finish_update_operation(&app);
+                    return;
+                }
+            };
+        let comparison_version = current_version.clone();
+        let check_result = match app
+            .updater_builder()
+            .version_comparator(move |_package_version, release| {
+                compare_core_versions(&release.version, &comparison_version)
+                    != CompareOrdering::Less
+            })
+            .build()
+        {
+            Ok(updater) => updater.check().await,
+            Err(error) => Err(error),
+        };
+
+        let update = match check_result {
+            Ok(Some(update)) => update,
+            Ok(None) => {
+                if source == UpdateCheckSource::Manual {
+                    show_update_message(
+                        &app,
+                        format!(
+                            "当前已是最新版本（{}）。",
+                            version_label(&current_version.to_string(), &current_build_number)
+                        ),
+                        MessageDialogKind::Info,
+                    );
+                }
+                finish_update_operation(&app);
+                return;
+            }
+            Err(error) => {
+                eprintln!("[updater] update check failed: {error}");
+                if source == UpdateCheckSource::Manual {
+                    show_update_message(
+                        &app,
+                        format!("检查更新失败：{error}"),
+                        MessageDialogKind::Error,
+                    );
+                }
+                finish_update_operation(&app);
+                return;
+            }
+        };
+
+        let remote_build_number = match manifest_build_number(&update.raw_json) {
+            Ok(build_number) => build_number,
+            Err(error) => {
+                eprintln!("[updater] {error}");
+                if source == UpdateCheckSource::Manual {
+                    show_update_message(
+                        &app,
+                        "更新清单缺少有效的构建号。",
+                        MessageDialogKind::Error,
+                    );
+                }
+                finish_update_operation(&app);
+                return;
+            }
+        };
+        let is_newer = match is_remote_update_newer(
+            &current_version,
+            &current_build_number,
+            &update.version,
+            remote_build_number,
+        ) {
+            Ok(is_newer) => is_newer,
+            Err(error) => {
+                eprintln!("[updater] {error}");
+                if source == UpdateCheckSource::Manual {
+                    show_update_message(&app, "更新版本信息无效。", MessageDialogKind::Error);
+                }
+                finish_update_operation(&app);
+                return;
+            }
+        };
+        if !is_newer {
+            if source == UpdateCheckSource::Manual {
+                show_update_message(
+                    &app,
+                    format!(
+                        "当前已是最新版本（{}）。",
+                        version_label(&current_version.to_string(), &current_build_number)
+                    ),
+                    MessageDialogKind::Info,
+                );
+            }
+            finish_update_operation(&app);
+            return;
+        }
+
+        let prompt = update_prompt(
+            &version_label(&current_version.to_string(), &current_build_number),
+            &version_label(&update.version, remote_build_number),
+            update.body.as_deref(),
+        );
+        let dialog_app = app.clone();
+        let accepted = tauri::async_runtime::spawn_blocking(move || {
+            dialog_app
+                .dialog()
+                .message(prompt)
+                .title("OpenHarness 更新")
+                .kind(MessageDialogKind::Info)
+                .buttons(MessageDialogButtons::OkCancelCustom(
+                    "立即更新".to_string(),
+                    "稍后".to_string(),
+                ))
+                .blocking_show()
+        })
+        .await
+        .unwrap_or(false);
+
+        if !accepted {
+            finish_update_operation(&app);
+            return;
+        }
+
+        let menu_item = app.state::<AppUpdateState>().menu_item.clone();
+        let _ = menu_item.set_text("正在下载更新...");
+        let mut downloaded = 0u64;
+        let mut last_bucket = None;
+        let install_result = update
+            .download_and_install(
+                |chunk_length, content_length| {
+                    downloaded = downloaded.saturating_add(chunk_length as u64);
+                    if let Some(percent) = download_percent(downloaded, content_length) {
+                        let bucket = percent / 5;
+                        if last_bucket != Some(bucket) {
+                            last_bucket = Some(bucket);
+                            let _ = menu_item.set_text(format!("正在下载更新... {percent}%"));
+                        }
+                    }
+                },
+                || {
+                    let _ = menu_item.set_text("正在安装更新...");
+                },
+            )
+            .await;
+
+        match install_result {
+            Ok(()) => {
+                let _ = menu_item.set_text("正在重启...");
+                app.restart();
+            }
+            Err(error) => {
+                eprintln!("[updater] update installation failed: {error}");
+                show_update_message(
+                    &app,
+                    format!("更新安装失败：{error}"),
+                    MessageDialogKind::Error,
+                );
+                finish_update_operation(&app);
+            }
+        }
+    });
+}
+
 /// Pick the label for the next window; "main" first, then "session-N".
 fn next_window_label(state: &Arc<BackendState>) -> String {
     let n = state.window_seq.fetch_add(1, Ordering::SeqCst);
@@ -395,11 +729,12 @@ fn show_main_window(app: &tauri::AppHandle) {
 }
 
 /// Build the menu-bar (tray) icon and its menu.
-fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
+fn build_tray(app: &tauri::AppHandle) -> tauri::Result<AppUpdateState> {
     let show = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
     let new = MenuItem::with_id(app, "new", "新建窗口", true, None::<&str>)?;
+    let update = MenuItem::with_id(app, "update", UPDATE_MENU_LABEL, true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &new, &quit])?;
+    let menu = Menu::with_items(app, &[&show, &new, &update, &quit])?;
 
     let tray_app = app.clone();
     TrayIconBuilder::new()
@@ -413,6 +748,7 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                 let state = app.state::<Arc<BackendState>>();
                 let _ = create_window(app, state.inner());
             }
+            "update" => request_update_check(app.clone(), UpdateCheckSource::Manual),
             "quit" => app.exit(0),
             _ => {}
         })
@@ -426,7 +762,10 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             }
         })
         .build(app)?;
-    Ok(())
+    Ok(AppUpdateState {
+        busy: AtomicBool::new(false),
+        menu_item: update,
+    })
 }
 
 fn main() {
@@ -436,6 +775,7 @@ fn main() {
             show_main_window(app);
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let resource_dir = app.path().resource_dir()?;
             let home = app.path().home_dir()?;
@@ -467,7 +807,9 @@ fn main() {
             let _ = create_window(app.handle(), &state);
 
             app.manage(state);
-            build_tray(app.handle())?;
+            let update_state = build_tray(app.handle())?;
+            app.manage(update_state);
+            request_update_check(app.handle().clone(), UpdateCheckSource::Automatic);
 
             Ok(())
         })
@@ -571,5 +913,58 @@ mod tests {
 
         assert_eq!(*state.child_pid.lock().unwrap(), None);
         assert!(state.current_url().is_none());
+    }
+
+    #[test]
+    fn update_prompt_includes_versions_and_truncates_long_notes() {
+        let notes = "a".repeat(UPDATE_NOTES_LIMIT + 1);
+        let prompt = update_prompt("0.1.0，构建 41", "0.1.0，构建 42", Some(&notes));
+
+        assert!(prompt.contains("构建 41"));
+        assert!(prompt.contains("构建 42"));
+        assert!(prompt.contains("\n...\n"));
+        assert!(!prompt.contains(&notes));
+    }
+
+    #[test]
+    fn download_percent_handles_unknown_empty_and_overrun_sizes() {
+        assert_eq!(download_percent(50, Some(100)), Some(50));
+        assert_eq!(download_percent(120, Some(100)), Some(100));
+        assert_eq!(download_percent(50, Some(0)), None);
+        assert_eq!(download_percent(50, None), None);
+    }
+
+    #[test]
+    fn update_versions_compare_version_before_build_number() {
+        let current_version = Version::parse("0.1.0").unwrap();
+
+        assert!(is_remote_update_newer(&current_version, "41", "0.1.0-beta.2", "42").unwrap());
+        assert!(is_remote_update_newer(&current_version, "42", "0.1.0-alpha.9", "43").unwrap());
+        assert!(!is_remote_update_newer(&current_version, "42", "0.1.0-beta.3", "42").unwrap());
+        assert!(is_remote_update_newer(&current_version, "99", "0.1.1-beta.0", "1").unwrap());
+        assert!(!is_remote_update_newer(&current_version, "1", "0.0.9-beta.99", "999").unwrap());
+        assert_eq!(
+            compare_core_versions(
+                &Version::parse("0.1.0-alpha.1").unwrap(),
+                &Version::parse("0.1.0-beta.99").unwrap()
+            ),
+            CompareOrdering::Equal
+        );
+        assert_eq!(
+            compare_build_numbers("1.10", "1.2").unwrap(),
+            CompareOrdering::Greater
+        );
+        assert_eq!(
+            compare_build_numbers("1", "1.0").unwrap(),
+            CompareOrdering::Equal
+        );
+    }
+
+    #[test]
+    fn requires_a_positive_configured_build_number() {
+        assert_eq!(configured_build_number(Some("7")).unwrap(), "7");
+        assert!(configured_build_number(None).is_err());
+        assert!(configured_build_number(Some("0")).is_err());
+        assert!(configured_build_number(Some("01")).is_err());
     }
 }

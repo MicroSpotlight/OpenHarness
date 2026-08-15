@@ -25,7 +25,9 @@
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev",
-    "build": "tauri build"
+    "build": "node scripts/build-tauri.mjs",
+    "test:build-number": "node --test scripts/build-tauri.test.mjs",
+    "test:update-manifest": "node --test scripts/update-manifest.test.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0"

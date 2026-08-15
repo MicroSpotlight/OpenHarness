@@ -14,12 +14,14 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": ["app", "dmg"],
     "category": "DeveloperTool",
     "shortDescription": "Native AI desktop app for macOS",
     "longDescription": "OpenHarness runs an open-source AI agent harness in a native macOS window.",
     "copyright": "Copyright 2026 MicroSpotlight",
     "macOS": {
+      "bundleVersion": "7",
       "hardenedRuntime": true,
       "minimumSystemVersion": "15.0"
     },
@@ -34,6 +36,14 @@
       "runtime/": "runtime/",
       "../LICENSE": "LICENSE",
       "../NOTICE": "NOTICE"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFBOUQ1OEZBMzZCQzM5QTMKUldTak9idzIrbGlkR3NMMU1lNFkybWl5dDZVWjdQUzZ0UGxrazBCUkFVNytMY2syQWU0MzlnTXcK",
+      "endpoints": [
+        "https://openharness.microspotlight.team/latest.json"
+      ]
     }
   }
 }

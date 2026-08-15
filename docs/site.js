@@ -184,6 +184,7 @@ function formatFileSize(bytes) {
 
 function renderLatestRelease() {
   const releaseVersion = latestRelease?.version;
+  const downloads = latestRelease?.downloads ?? latestRelease?.platforms ?? {};
   const platformLabels = {
     "darwin-aarch64": "Apple Silicon",
     "darwin-x86_64": "Intel",
@@ -191,7 +192,7 @@ function renderLatestRelease() {
 
   document.querySelectorAll("[data-download-platform]").forEach((link) => {
     const platform = link.dataset.downloadPlatform;
-    const installer = latestRelease?.platforms?.[platform];
+    const installer = downloads[platform];
     if (!installer?.url || !installer?.name || !installer?.size) return;
 
     link.href = installer.url;
@@ -201,7 +202,7 @@ function renderLatestRelease() {
   const summary = document.querySelector("[data-release-summary]");
   if (!summary) return;
 
-  const architectureSummary = Object.entries(latestRelease?.platforms ?? {})
+  const architectureSummary = Object.entries(downloads)
     .map(([platform, value]) => {
       if (!value?.size || !platformLabels[platform]) return null;
       return `${platformLabels[platform]} ${formatFileSize(value.size)}`;
@@ -220,7 +221,7 @@ async function loadLatestRelease() {
     if (!response.ok) return;
 
     const release = await response.json();
-    if (!release?.version || !release?.platforms) return;
+    if (!release?.version || (!release?.downloads && !release?.platforms)) return;
     latestRelease = release;
     renderLatestRelease();
   } catch {

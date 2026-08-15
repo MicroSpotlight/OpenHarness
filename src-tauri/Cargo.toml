@@ -16,6 +16,9 @@ url = "2"
 libc = "0.2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-updater = "2"
+serde_json = "1"
+semver = "1"
 
 [profile.release]
 strip = true
