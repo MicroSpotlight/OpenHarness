@@ -24,6 +24,7 @@ esac
 NODE_DIST_DIR="node-${NODE_VERSION}-darwin-${NODE_DIST_ARCH}"
 NODE_TARBALL="${NODE_DIST_DIR}.tar.gz"
 NODE_URL="https://nodejs.org/dist/${NODE_VERSION}/${NODE_TARBALL}"
+NODE_SHASUMS_URL="https://nodejs.org/dist/${NODE_VERSION}/SHASUMS256.txt"
 DSH_VERSION="0.1.0-rc.6"
 
 RUNTIME_DIR="src-tauri/runtime"
@@ -40,10 +41,21 @@ if [[ ! -x "${RUNTIME_DIR}/node" || " ${INSTALLED_NODE_ARCH} " != *" ${NODE_BINA
   fi
   echo ">> 下载 ${NODE_URL}"
   curl -fsSL -o "/tmp/${NODE_TARBALL}" "${NODE_URL}"
+  curl -fsSL -o "/tmp/${NODE_TARBALL}.shasums" "${NODE_SHASUMS_URL}"
+  EXPECTED_NODE_SHA256="$(awk -v filename="${NODE_TARBALL}" '$2 == filename { print $1 }' "/tmp/${NODE_TARBALL}.shasums")"
+  if [[ -z "${EXPECTED_NODE_SHA256}" ]]; then
+    echo "错误：在 Node.js SHASUMS256.txt 中找不到 ${NODE_TARBALL}" >&2
+    exit 1
+  fi
+  ACTUAL_NODE_SHA256="$(shasum -a 256 "/tmp/${NODE_TARBALL}" | awk '{ print $1 }')"
+  if [[ "${ACTUAL_NODE_SHA256}" != "${EXPECTED_NODE_SHA256}" ]]; then
+    echo "错误：${NODE_TARBALL} SHA-256 校验失败" >&2
+    exit 1
+  fi
   tar -xzf "/tmp/${NODE_TARBALL}" -C /tmp
   cp "/tmp/${NODE_DIST_DIR}/bin/node" "${RUNTIME_DIR}/node"
   chmod +x "${RUNTIME_DIR}/node"
-  rm -rf "/tmp/${NODE_TARBALL}" "/tmp/${NODE_DIST_DIR}"
+  rm -rf "/tmp/${NODE_TARBALL}" "/tmp/${NODE_TARBALL}.shasums" "/tmp/${NODE_DIST_DIR}"
 else
   echo ">> node 已存在，跳过"
 fi
@@ -68,5 +80,11 @@ EOF
 else
   echo ">> dsh 已存在，跳过"
 fi
+
+echo ">> 校验原生运行时"
+(
+  cd "${DSH_DIR}"
+  ../node -e "require('node-pty'); require('sharp'); require('koffi')"
+)
 
 echo ">> runtime 就绪: ${RUNTIME_DIR}"

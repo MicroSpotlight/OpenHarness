@@ -1,47 +1,128 @@
-# DeepSeek Harness 桌面端 (deepseek-desktop)
+# DeepSeek Harness for macOS
 
-把 `bunx @deepseek-ai/dsh web` 改造成 macOS 原生桌面应用：一个 Tauri 壳，负责启动内置的
-DSH Web 后端（Node + `@deepseek-ai/dsh` 运行时已打包进 App），再用原生窗口承载浏览器界面。
+English | [简体中文](README.zh-CN.md)
 
-## 目录结构
+DeepSeek Harness for macOS packages the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
+Web UI as a native macOS application. It starts a bundled `dsh web` runtime in
+the background and presents it in a dedicated Tauri window, so no separate
+Node.js or command-line installation is required for normal use.
 
-- `src-tauri/` — Tauri 工程（Rust 主程序、配置、图标）
-  - `src/main.rs` — 启动逻辑：spawn `dsh web --port 0` → 解析 URL → 建原生窗口 → 退出清理
-  - `runtime/` — 打包进 App 的运行时（**gitignored**，由 `setup-runtime.sh` 生成）：`node`（Node.js 24 LTS 官方二进制）+ `dsh/node_modules`（完整 DSH 依赖树）
-- `frontend/dist/` — 占位页（窗口实际加载的是 DSH 后端动态分配的 `http://127.0.0.1:<port>`）
-- `assets/` — 图标源文件
-- `setup-runtime.sh` — 下载 Node 二进制 + 安装 `@deepseek-ai/dsh`，重建 `src-tauri/runtime/`
+DeepSeek Harness is currently a developer preview. The desktop app follows the
+upstream project closely, so prerelease versions may include breaking changes.
 
-## 构建
+## Features
 
-前置：macOS + Xcode 命令行工具 + Rust（rustup）+ Bun。
+- Native macOS window for the DeepSeek Harness Web UI
+- Self-contained Node.js and `@deepseek-ai/dsh` runtime
+- Native builds for Apple Silicon and Intel Macs
+- Automatic local port selection to avoid conflicts
+- Shared DSH configuration, credentials, sessions, and plugins in `~/.dsh`
+- Bundled DSH telemetry disabled by the desktop launcher
 
-```bash
-bun install                 # 安装 @tauri-apps/cli
-./setup-runtime.sh          # 重建 src-tauri/runtime/（Node 二进制 + dsh 依赖树）
-bun run build               # 等价于 tauri build，产出 .app 与 .dmg
-# 仅构建 .app：
-bun run tauri build --bundles app
-# 仅构建 .dmg：
-bun run tauri build --bundles dmg
+## Requirements
+
+- macOS 15.0 or later
+- Credentials for at least one model provider supported by DeepSeek Harness
+
+## Install
+
+Download the DMG for your Mac from
+[GitHub Releases](https://github.com/MicroSpotlight/deepseek-desktop/releases):
+
+- `arm64` for Apple Silicon Macs
+- `x64` for Intel Macs
+
+Open the DMG, drag **DeepSeek Harness** into **Applications**, and launch it.
+
+## Usage
+
+On launch, the app starts the bundled DeepSeek Harness server on an available
+loopback port and opens its Web UI. Configure providers and use Harness from the
+native window as you would from `dsh web`.
+
+The app uses the same `~/.dsh` directory as the DSH command-line interface.
+Existing credentials, configuration, sessions, and plugins are therefore
+available to both interfaces. See the upstream
+[DeepSeek Harness user guide](https://github.com/deepseek-ai/deepseek-harness/tree/master/docs/user/guide)
+for Harness-specific usage.
+
+## How It Works
+
+1. Tauri launches the bundled Node.js executable and the official
+   `@deepseek-ai/dsh` package with `dsh web --port 0`.
+2. DSH selects an available local port and reports its loopback URL.
+3. The app opens that URL in a native webview.
+4. Closing the app also terminates the bundled DSH process.
+
+The desktop host does not fork or reimplement the Harness UI. The runtime is
+assembled from the published `@deepseek-ai/dsh` npm package by
+[`setup-runtime.sh`](setup-runtime.sh).
+
+## Development
+
+### Prerequisites
+
+- macOS
+- Xcode Command Line Tools
+- [Rust](https://www.rust-lang.org/tools/install)
+- [Bun](https://bun.sh/)
+
+### Build From Source
+
+```sh
+git clone https://github.com/MicroSpotlight/deepseek-desktop.git
+cd deepseek-desktop
+bun install
+./setup-runtime.sh
+bun run build
 ```
 
-产物位置：
+Build artifacts are written under `src-tauri/target/release/bundle/`.
 
-- `.app`：`src-tauri/target/release/bundle/macos/DeepSeek Harness.app`
-- `.dmg`：`src-tauri/target/release/bundle/dmg/DeepSeek Harness_0.1.0_<arch>.dmg`
+For local development:
 
-## 使用
+```sh
+bun run dev
+```
 
-1. 打开 `.dmg`，把 `DeepSeek Harness.app` 拖进 `Applications`。
-2. 双击启动。App 会在本地随机端口启动 DSH Web 后端，并在原生窗口打开界面。
-3. 数据与配置复用你现有的 `~/.dsh`（与命令行 `dsh` 一致，包括模型凭据、会话、插件等）。
+### Repository Layout
 
-> 由于当前为未签名/未公证的本地构建，首次打开若被 Gatekeeper 拦截，右键 App →
-> 「打开」即可。正式分发请配置 Apple Developer 签名 + 公证。
+```text
+.
+├── assets/                 App icon sources
+├── frontend/dist/          Tauri bootstrap page
+├── scripts/                Project helper scripts
+├── src-tauri/              Rust host and Tauri configuration
+└── setup-runtime.sh        Bundled DSH runtime assembler
+```
 
-## 说明
+`src-tauri/runtime/` is generated locally and excluded from Git.
 
-- 端口：后端用 `--port 0` 让系统自动分配空闲端口，App 从后端打印的
-  `dsh web: http://127.0.0.1:<port>` 行解析出地址后加载，避免端口冲突。
-- 退出：关闭窗口或 `Cmd+Q` 会随之关闭内置 DSH 后端进程。
+## Privacy
+
+The desktop host does not add telemetry and launches the bundled DSH runtime
+with telemetry disabled. Prompts, attachments, and model requests are still
+sent to the model providers that the user configures. Local DSH data remains in
+`~/.dsh`.
+
+## Contributing
+
+Issues and pull requests are welcome. For changes that affect Harness behavior
+or its Web UI, contribute to the
+[upstream DeepSeek Harness repository](https://github.com/deepseek-ai/deepseek-harness).
+
+## License and Upstream Attribution
+
+The original desktop wrapper code in this repository is licensed under the
+[Apache License 2.0](LICENSE).
+
+This application bundles
+[`@deepseek-ai/dsh`](https://www.npmjs.com/package/@deepseek-ai/dsh), published
+from [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) under
+the [MIT License](https://github.com/deepseek-ai/deepseek-harness/blob/master/LICENSE):
+
+> Copyright (c) 2026 DeepSeek
+
+The upstream MIT license text is retained in the npm package and in the
+resulting application bundle. Other bundled dependencies remain subject to
+their respective licenses.
