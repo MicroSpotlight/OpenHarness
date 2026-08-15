@@ -1,0 +1,11 @@
+{
+  "name": "openharness-runtime",
+  "private": true,
+  "trustedDependencies": [
+    "@deepseek-ai/dsh-subprocess-local",
+    "node-pty"
+  ],
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.1.0-rc.6"
+  }
+}

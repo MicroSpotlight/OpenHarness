@@ -1,0 +1,12 @@
+OpenHarness
+Copyright 2026 MicroSpotlight
+
+OpenHarness includes DeepSeek Harness software distributed under the MIT
+License:
+
+  DeepSeek Harness
+  Copyright (c) 2026 DeepSeek
+  https://github.com/deepseek-ai/deepseek-harness
+
+The complete MIT license is retained in the bundled @deepseek-ai/dsh package.
+Other bundled dependencies are distributed under their respective licenses.
