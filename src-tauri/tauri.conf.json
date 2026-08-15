@@ -20,6 +20,7 @@
     "longDescription": "OpenHarness runs an open-source AI agent harness in a native macOS window.",
     "copyright": "Copyright 2026 MicroSpotlight",
     "macOS": {
+      "hardenedRuntime": true,
       "minimumSystemVersion": "15.0"
     },
     "icon": [

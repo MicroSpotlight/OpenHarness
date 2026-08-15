@@ -2,8 +2,26 @@
   "name": "openharness",
   "version": "0.1.0",
   "private": true,
-  "description": "Native macOS desktop app for OpenHarness",
+  "description": "Native macOS desktop app for an open-source AI agent harness",
+  "keywords": [
+    "ai-agent",
+    "desktop-app",
+    "macos",
+    "tauri"
+  ],
+  "author": {
+    "name": "MicroSpotlight",
+    "url": "https://github.com/MicroSpotlight"
+  },
   "license": "Apache-2.0",
+  "homepage": "https://github.com/MicroSpotlight/OpenHarness#readme",
+  "bugs": {
+    "url": "https://github.com/MicroSpotlight/OpenHarness/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MicroSpotlight/OpenHarness.git"
+  },
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev",

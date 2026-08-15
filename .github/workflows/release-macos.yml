@@ -1,0 +1,399 @@
+name: Release macOS
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-macos-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate-version:
+    name: Validate release version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      build_number: ${{ steps.version.outputs.build_number }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate application version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tauri_version="$(jq -r '.version' src-tauri/tauri.conf.json)"
+          package_version="$(jq -r '.version' package.json)"
+          cargo_version="$(awk '
+            /^\[package\]$/ { in_package = 1; next }
+            /^\[/ { in_package = 0 }
+            in_package && /^version = / {
+              gsub(/version = |\"/, "")
+              print
+              exit
+            }
+          ' src-tauri/Cargo.toml)"
+
+          code_version_pattern='^([0-9]+)\.([0-9]+)\.([0-9]+)$'
+          tag_version_pattern='^([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+          if [[ ! "${tauri_version}" =~ ${code_version_pattern} ]]; then
+            echo "Application version ${tauri_version} must include major, minor, and patch numbers" >&2
+            exit 1
+          fi
+          code_major="${BASH_REMATCH[1]}"
+          code_minor="${BASH_REMATCH[2]}"
+          code_patch="${BASH_REMATCH[3]}"
+
+          if [[ "${tauri_version}" != "${package_version}" ]]; then
+            echo "Version mismatch: Tauri=${tauri_version}, package=${package_version}" >&2
+            exit 1
+          fi
+          if [[ "${tauri_version}" != "${cargo_version}" ]]; then
+            echo "Version mismatch: Tauri=${tauri_version}, Cargo=${cargo_version}" >&2
+            exit 1
+          fi
+
+          tag_is_prerelease=false
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            if [[ "${GITHUB_REF_NAME}" != v* ]]; then
+              echo "Tag ${GITHUB_REF_NAME} must start with v" >&2
+              exit 1
+            fi
+            tag_version="${GITHUB_REF_NAME#v}"
+            if [[ ! "${tag_version}" =~ ${tag_version_pattern} ]]; then
+              echo "Tag ${GITHUB_REF_NAME} does not contain a supported release version" >&2
+              exit 1
+            fi
+            tag_major="${BASH_REMATCH[1]}"
+            tag_minor="${BASH_REMATCH[2]}"
+            tag_patch="${BASH_REMATCH[3]}"
+            if [[ -n "${BASH_REMATCH[4]:-}" ]]; then
+              tag_is_prerelease=true
+            fi
+            if [[ "${tag_major}" != "${code_major}" || "${tag_minor}" != "${code_minor}" || "${tag_patch}" != "${code_patch}" ]]; then
+              echo "Tag version ${tag_version} must match code version ${tauri_version}" >&2
+              exit 1
+            fi
+          fi
+
+          build_number="${GITHUB_RUN_NUMBER}"
+          if [[ ! "${build_number}" =~ ^[1-9][0-9]{0,3}(\.[0-9]{1,2}){0,2}$ ]]; then
+            echo "Build number ${build_number} is not a valid macOS CFBundleVersion" >&2
+            exit 1
+          fi
+
+          prerelease=false
+          if [[ "${code_major}" == "0" || "${tag_is_prerelease}" == "true" ]]; then
+            prerelease=true
+          fi
+          {
+            echo "version=${tauri_version}"
+            echo "build_number=${build_number}"
+            echo "prerelease=${prerelease}"
+          } >> "${GITHUB_OUTPUT}"
+
+  build-macos:
+    name: Build macOS (${{ matrix.artifact_arch }})
+    needs: validate-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            artifact_arch: arm64
+            expected_arch: arm64
+            runtime_cpu: arm64
+          - target: x86_64-apple-darwin
+            artifact_arch: x64
+            expected_arch: x86_64
+            runtime_cpu: x64
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.9
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust build output
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install project dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Assemble bundled DSH runtime
+        env:
+          OPENHARNESS_RUNTIME_CPU: ${{ matrix.runtime_cpu }}
+        run: ./setup-runtime.sh
+
+      - name: Import code-signing certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${APPLE_CERTIFICATE}" || -z "${APPLE_CERTIFICATE_PASSWORD}" ]]; then
+            echo "APPLE_CERTIFICATE and APPLE_CERTIFICATE_PASSWORD are required" >&2
+            exit 1
+          fi
+
+          certificate_path="${RUNNER_TEMP}/developer-id.p12"
+          identities_path="${RUNNER_TEMP}/developer-id-identities.txt"
+          keychain_path="${RUNNER_TEMP}/release-signing.keychain-db"
+          keychain_password="$(openssl rand -base64 32)"
+          trap 'rm -f "${certificate_path}" "${identities_path}"' EXIT
+          echo "::add-mask::${keychain_password}"
+          echo "SIGNING_KEYCHAIN_PATH=${keychain_path}" >> "${GITHUB_ENV}"
+
+          printf '%s' "${APPLE_CERTIFICATE}" | openssl base64 -d -A -out "${certificate_path}"
+          security create-keychain -p "${keychain_password}" "${keychain_path}"
+          security set-keychain-settings -lut 21600 "${keychain_path}"
+          security unlock-keychain -p "${keychain_password}" "${keychain_path}"
+          if ! security import "${certificate_path}" \
+            -k "${keychain_path}" \
+            -P "${APPLE_CERTIFICATE_PASSWORD}" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security \
+            >/dev/null 2>&1; then
+            echo "Failed to import the Developer ID certificate; verify the certificate data and password" >&2
+            exit 1
+          fi
+          if ! security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "${keychain_password}" \
+            "${keychain_path}" \
+            >/dev/null 2>&1; then
+            echo "Failed to configure access to the code-signing private key" >&2
+            exit 1
+          fi
+          security default-keychain -d user -s "${keychain_path}"
+
+          security find-identity -v -p codesigning "${keychain_path}" \
+            | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' \
+            > "${identities_path}"
+          identity_count="$(wc -l < "${identities_path}" | tr -d ' ')"
+          if [[ "${identity_count}" != "1" ]]; then
+            echo "Expected exactly one valid Developer ID Application identity; found ${identity_count}" >&2
+            exit 1
+          fi
+
+          signing_identity="$(head -n 1 "${identities_path}")"
+          echo "::add-mask::${signing_identity}"
+          echo "APPLE_SIGNING_IDENTITY=${signing_identity}" >> "${GITHUB_ENV}"
+
+      - name: Configure notarization credentials
+        env:
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${APPLE_API_PRIVATE_KEY}" || -z "${APPLE_API_KEY}" || -z "${APPLE_API_ISSUER}" ]]; then
+            echo "APPLE_API_PRIVATE_KEY, APPLE_API_KEY, and APPLE_API_ISSUER are required" >&2
+            exit 1
+          fi
+
+          api_key_path="${RUNNER_TEMP}/app-store-connect-api-key.p8"
+          echo "APPLE_API_KEY_PATH=${api_key_path}" >> "${GITHUB_ENV}"
+          printf '%s' "${APPLE_API_PRIVATE_KEY}" > "${api_key_path}"
+          chmod 600 "${api_key_path}"
+          openssl pkey -in "${api_key_path}" -check -noout >/dev/null
+
+      - name: Sign bundled native runtime
+        run: ./scripts/sign-macos-runtime.sh
+
+      - name: Build and notarize application
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: >-
+          bun run tauri build
+          --target ${{ matrix.target }}
+          --bundles app
+          --config '{"bundle":{"macOS":{"bundleVersion":"${{ needs.validate-version.outputs.build_number }}"}}}'
+          --ci
+
+      - name: Package and notarize disk image
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle_root="$(pwd)/src-tauri/target/${{ matrix.target }}/release/bundle"
+          app_path="${bundle_root}/macos/OpenHarness.app"
+          dmg_path="${bundle_root}/dmg/OpenHarness_${{ needs.validate-version.outputs.version }}_${{ matrix.artifact_arch }}.dmg"
+
+          if [[ ! -d "${app_path}" ]]; then
+            echo "Expected signed .app artifact was not produced" >&2
+            exit 1
+          fi
+
+          info_plist="${app_path}/Contents/Info.plist"
+          actual_version="$(plutil -extract CFBundleShortVersionString raw -o - "${info_plist}")"
+          actual_build_number="$(plutil -extract CFBundleVersion raw -o - "${info_plist}")"
+          if [[ "${actual_version}" != "${{ needs.validate-version.outputs.version }}" ]]; then
+            echo "Expected app version ${{ needs.validate-version.outputs.version }}, found ${actual_version}" >&2
+            exit 1
+          fi
+          if [[ "${actual_build_number}" != "${{ needs.validate-version.outputs.build_number }}" ]]; then
+            echo "Expected build number ${{ needs.validate-version.outputs.build_number }}, found ${actual_build_number}" >&2
+            exit 1
+          fi
+
+          codesign --verify --deep --strict "${app_path}"
+          xcrun stapler validate "${app_path}"
+          if ! spctl --assess --type execute "${app_path}" >/dev/null 2>&1; then
+            echo "Gatekeeper rejected the signed application" >&2
+            exit 1
+          fi
+
+          runtime_path="${app_path}/Contents/Resources/runtime"
+          runtime_node="${runtime_path}/node"
+          runtime_dsh="${runtime_path}/dsh"
+          if [[ ! -x "${runtime_node}" || ! -d "${runtime_dsh}" ]]; then
+            echo "Bundled Node or DSH runtime is missing from the signed app" >&2
+            exit 1
+          fi
+          runtime_archs="$(lipo -archs "${runtime_node}")"
+          if [[ " ${runtime_archs} " != *" ${{ matrix.expected_arch }} "* ]]; then
+            echo "Expected bundled Node architecture ${{ matrix.expected_arch }}, found ${runtime_archs}" >&2
+            exit 1
+          fi
+          codesign --verify --strict "${runtime_node}"
+          if [[ "${{ matrix.runtime_cpu }}" == "arm64" ]]; then
+            (
+              cd "${runtime_dsh}"
+              "${runtime_node}" -e "require('node-pty'); require('sharp'); require('koffi')"
+            )
+          fi
+
+          ./scripts/create-macos-dmg.sh "${app_path}" "${dmg_path}" "OpenHarness"
+          codesign --force --timestamp --sign "${APPLE_SIGNING_IDENTITY}" "${dmg_path}"
+          codesign --verify --strict "${dmg_path}"
+
+          xcrun notarytool submit "${dmg_path}" \
+            --key "${APPLE_API_KEY_PATH}" \
+            --key-id "${APPLE_API_KEY}" \
+            --issuer "${APPLE_API_ISSUER}" \
+            --wait \
+            --timeout 1h
+          xcrun stapler staple "${dmg_path}"
+          xcrun stapler validate "${dmg_path}"
+          codesign --verify --strict "${dmg_path}"
+          if ! spctl --assess --type open --context context:primary-signature "${dmg_path}" >/dev/null 2>&1; then
+            echo "Gatekeeper rejected the signed disk image" >&2
+            exit 1
+          fi
+
+          mkdir -p dist/macos
+          release_dmg="dist/macos/OpenHarness_${{ needs.validate-version.outputs.version }}_${{ matrix.artifact_arch }}.dmg"
+          cp "${dmg_path}" "${release_dmg}"
+          (
+            cd dist/macos
+            release_filename="$(basename "${release_dmg}")"
+            shasum -a 256 "${release_filename}" > "${release_filename}.sha256"
+          )
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-${{ matrix.artifact_arch }}
+          path: dist/macos/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Clean up signing material
+        if: always()
+        shell: bash
+        run: |
+          if [[ -n "${SIGNING_KEYCHAIN_PATH:-}" && -f "${SIGNING_KEYCHAIN_PATH}" ]]; then
+            security delete-keychain "${SIGNING_KEYCHAIN_PATH}" || true
+          fi
+          if [[ -n "${APPLE_API_KEY_PATH:-}" && -f "${APPLE_API_KEY_PATH}" ]]; then
+            rm -f "${APPLE_API_KEY_PATH}"
+          fi
+
+  publish-release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - validate-version
+      - build-macos
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download signed macOS artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: macos-*
+          path: dist/macos
+          merge-multiple: true
+
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IS_PRERELEASE: ${{ needs.validate-version.outputs.prerelease }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t assets < <(find dist/macos -maxdepth 1 -type f -print | sort)
+          if [[ "${#assets[@]}" -ne 4 ]]; then
+            echo "Expected two DMGs and two SHA-256 files; found ${#assets[@]} files" >&2
+            exit 1
+          fi
+
+          release_title="OpenHarness ${GITHUB_REF_NAME}"
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --clobber
+            if [[ "${IS_PRERELEASE}" == "true" ]]; then
+              gh release edit "${GITHUB_REF_NAME}" \
+                --repo "${GITHUB_REPOSITORY}" \
+                --title "${release_title}" \
+                --prerelease \
+                --latest=false
+            else
+              gh release edit "${GITHUB_REF_NAME}" \
+                --repo "${GITHUB_REPOSITORY}" \
+                --title "${release_title}" \
+                --prerelease=false \
+                --latest
+            fi
+          else
+            release_args=(
+              --repo "${GITHUB_REPOSITORY}"
+              --verify-tag
+              --title "${release_title}"
+              --generate-notes
+            )
+            if [[ "${IS_PRERELEASE}" == "true" ]]; then
+              release_args+=(--prerelease)
+            else
+              release_args+=(--latest)
+            fi
+            gh release create "${GITHUB_REF_NAME}" "${assets[@]}" "${release_args[@]}"
+          fi

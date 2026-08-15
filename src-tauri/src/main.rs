@@ -25,8 +25,10 @@ use url::{Host, Url};
 
 /// How long to wait for the DSH server to print its URL before giving up.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
-/// Consecutive spawn failures before surfacing an error dialog.
+/// Consecutive backend failures before surfacing an error dialog.
 const MAX_RESTART_ATTEMPTS: u32 = 3;
+/// Runtime long enough to treat an earlier failure streak as recovered.
+const STABLE_BACKEND_UPTIME: Duration = Duration::from_secs(30);
 
 /// Shared backend state: the running child PID (for quit-time kill), the
 /// current canonical URL (for windows), and coordination flags.
@@ -53,6 +55,11 @@ impl BackendState {
         let mut guard = self.url.lock().unwrap();
         *guard = Some(url);
         self.url_cv.notify_all();
+    }
+
+    fn mark_stopped(&self) {
+        *self.child_pid.lock().unwrap() = None;
+        *self.url.lock().unwrap() = None;
     }
 
     fn current_url(&self) -> Option<Url> {
@@ -128,6 +135,19 @@ fn startup_timeout_error() -> std::io::Error {
         std::io::ErrorKind::TimedOut,
         "timed out waiting for the dsh web server to report its URL",
     )
+}
+
+fn next_failure_count(current: u32, uptime: Option<Duration>) -> u32 {
+    let previous = if uptime.is_some_and(|duration| duration >= STABLE_BACKEND_UPTIME) {
+        0
+    } else {
+        current
+    };
+    previous.saturating_add(1)
+}
+
+fn restart_delay(failures: u32) -> Duration {
+    Duration::from_secs(2u64.saturating_pow(failures.min(6)).min(30))
 }
 
 /// Locate the bundled Node binary and the `dsh` entry script inside the app
@@ -273,9 +293,7 @@ fn backend_supervisor(
 
         match spawn_harness(&resource_dir, &home, &shell_env) {
             Ok((mut child, url)) => {
-                failures = 0;
-                error_reported = false;
-
+                let started_at = Instant::now();
                 let pid = child.id();
                 *state.child_pid.lock().unwrap() = Some(pid);
                 state.set_url(url.clone());
@@ -287,35 +305,47 @@ fn backend_supervisor(
                 }
 
                 // Block until the backend exits (crash or quit-time kill).
-                let _ = child.wait();
-                *state.child_pid.lock().unwrap() = None;
+                let exit_status = child.wait();
+                state.mark_stopped();
 
                 if state.quitting.load(Ordering::SeqCst) {
                     break;
                 }
-                eprintln!("[harness] backend exited unexpectedly; restarting");
-                std::thread::sleep(Duration::from_secs(1));
+
+                let uptime = started_at.elapsed();
+                if uptime >= STABLE_BACKEND_UPTIME {
+                    error_reported = false;
+                }
+                failures = next_failure_count(failures, Some(uptime));
+                let detail = match exit_status {
+                    Ok(status) => format!("backend exited unexpectedly with {status}"),
+                    Err(error) => format!("failed to wait for backend process: {error}"),
+                };
+                eprintln!("[harness] {detail} ({failures}); restarting");
+                if failures >= MAX_RESTART_ATTEMPTS && !error_reported {
+                    error_reported = true;
+                    show_backend_error(&app, &detail);
+                }
+                std::thread::sleep(restart_delay(failures));
             }
             Err(e) => {
-                failures += 1;
+                failures = next_failure_count(failures, None);
                 eprintln!("[harness] backend spawn failed ({failures}): {e}");
                 if failures >= MAX_RESTART_ATTEMPTS && !error_reported {
                     error_reported = true;
                     show_backend_error(&app, &e);
                 }
-                let backoff = 2u64.saturating_pow(failures.min(6)).min(30);
-                std::thread::sleep(Duration::from_secs(backoff));
+                std::thread::sleep(restart_delay(failures));
             }
         }
     }
     eprintln!("[harness] backend supervisor exiting");
 }
 
-/// Surface a native error dialog when the backend cannot start.
+/// Surface a native error dialog when the backend repeatedly fails.
 fn show_backend_error(app: &tauri::AppHandle, err: &dyn std::fmt::Display) {
-    let _ = app
-        .dialog()
-        .message(format!("OpenHarness 后端启动失败：{err}"))
+    app.dialog()
+        .message(format!("OpenHarness 后端运行失败：{err}"))
         .title("OpenHarness")
         .kind(MessageDialogKind::Error)
         .show(|_| {});
@@ -511,5 +541,35 @@ mod tests {
         let error = wait_for_startup_url(&receiver, Duration::from_millis(20)).unwrap_err();
 
         assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn failure_streak_resets_only_after_stable_uptime() {
+        assert_eq!(next_failure_count(2, None), 3);
+        assert_eq!(next_failure_count(2, Some(Duration::from_secs(29))), 3);
+        assert_eq!(next_failure_count(2, Some(STABLE_BACKEND_UPTIME)), 1);
+        assert_eq!(next_failure_count(u32::MAX, None), u32::MAX);
+    }
+
+    #[test]
+    fn restart_delay_is_exponential_and_capped() {
+        assert_eq!(restart_delay(1), Duration::from_secs(2));
+        assert_eq!(restart_delay(3), Duration::from_secs(8));
+        assert_eq!(restart_delay(6), Duration::from_secs(30));
+        assert_eq!(restart_delay(u32::MAX), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn backend_state_is_cleared_while_restarting() {
+        let state = BackendState::new();
+        *state.child_pid.lock().unwrap() = Some(42);
+        state.set_url(Url::parse("http://127.0.0.1:3080").unwrap());
+        assert_eq!(*state.child_pid.lock().unwrap(), Some(42));
+        assert!(state.current_url().is_some());
+
+        state.mark_stopped();
+
+        assert_eq!(*state.child_pid.lock().unwrap(), None);
+        assert!(state.current_url().is_none());
     }
 }

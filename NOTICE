@@ -1,8 +1,10 @@
 OpenHarness
 Copyright 2026 MicroSpotlight
 
-OpenHarness includes DeepSeek Harness software distributed under the MIT
-License:
+Original OpenHarness code is licensed under the Apache License 2.0 in LICENSE.
+
+The following separate notice applies only to the bundled DeepSeek Harness
+software, which is distributed under the MIT License:
 
   DeepSeek Harness
   Copyright (c) 2026 DeepSeek

@@ -3,6 +3,8 @@ name = "openharness"
 version = "0.1.0"
 description = "Native macOS desktop host for OpenHarness"
 authors = ["MicroSpotlight"]
+license = "Apache-2.0"
+repository = "https://github.com/MicroSpotlight/OpenHarness"
 edition = "2021"
 
 [build-dependencies]
