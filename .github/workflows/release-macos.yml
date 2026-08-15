@@ -406,8 +406,8 @@ jobs:
             --x86-sha256 "dist/macos/OpenHarness_${ASSET_VERSION}_x64.dmg.sha256" \
             --aarch64-dmg "dist/macos/OpenHarness_${ASSET_VERSION}_arm64.dmg" \
             --x86-dmg "dist/macos/OpenHarness_${ASSET_VERSION}_x64.dmg" \
-            --output dist/macos/latest.json
-          node scripts/update-manifest.mjs validate --input dist/macos/latest.json
+            --output dist/macos/version.json
+          node scripts/update-manifest.mjs validate --input dist/macos/version.json
           echo "RELEASE_NOTES_PATH=${release_notes_path}" >> "${GITHUB_ENV}"
 
       - name: Create or update GitHub Release
@@ -419,7 +419,7 @@ jobs:
           set -euo pipefail
           mapfile -t assets < <(find dist/macos -maxdepth 1 -type f -print | sort)
           if [[ "${#assets[@]}" -ne 9 ]]; then
-            echo "Expected two DMGs, two SHA-256 files, two updater archives, two signatures, and latest.json; found ${#assets[@]} files" >&2
+            echo "Expected two DMGs, two SHA-256 files, two updater archives, two signatures, and version.json; found ${#assets[@]} files" >&2
             exit 1
           fi
 
@@ -457,3 +457,20 @@ jobs:
             fi
             gh release create "${GITHUB_REF_NAME}" "${assets[@]}" "${release_args[@]}"
           fi
+
+  trigger-pages-deployment:
+    name: Trigger GitHub Pages deployment
+    needs: publish-release
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Deploy Pages with this release manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh workflow run deploy-pages.yml
+          --repo "${GITHUB_REPOSITORY}"
+          --ref main
+          --field "release-tag=${GITHUB_REF_NAME}"
