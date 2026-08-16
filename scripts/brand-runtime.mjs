@@ -227,4 +227,11 @@ copyFileSync(
   resolve(frontendDist, "openharness-icon.png"),
 );
 
+// DSH resolves profile plugins through its installation dependency closure.
+// Declare the bundled bridge there so its standard fallback links the package
+// without modifying the user's profile manifest.
+const dshManifest = JSON.parse(read("dsh/package.json"));
+dshManifest.dependencies["@openharness/native-bridge"] = "0.1.0";
+write("dsh/package.json", `${JSON.stringify(dshManifest, null, 2)}\n`);
+
 console.log(">> OpenHarness runtime branding applied");

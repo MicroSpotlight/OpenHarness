@@ -2431,6 +2431,7 @@ dependencies = [
  "cc",
  "libc",
  "semver",
+ "serde",
  "serde_json",
  "tauri",
  "tauri-build",

@@ -3,6 +3,7 @@
   let nativeLocale = detectBrowserLocale();
   let themePreference = "system";
   let lastNativePreferences;
+  let sessionSync = Promise.resolve();
 
   function detectBrowserLocale() {
     for (const tag of [...(navigator.languages ?? []), navigator.language]) {
@@ -108,6 +109,18 @@
     })().catch(() => {});
   }
 
+  function syncNativeSessions(event) {
+    const invoke = window.__TAURI_INTERNALS__?.invoke;
+    if (typeof invoke !== "function" || typeof event.detail !== "object" || event.detail === null) {
+      return;
+    }
+    const snapshot = event.detail;
+    sessionSync = sessionSync
+      .catch(() => {})
+      .then(() => invoke("sync_dsh_sessions", { snapshot }))
+      .catch(() => {});
+  }
+
   function caretAtPoint(x, y) {
     if (typeof document.caretPositionFromPoint === "function") {
       const position = document.caretPositionFromPoint(x, y);
@@ -163,6 +176,7 @@
   if (!isTopLevelLoopbackPage()) return;
   document.addEventListener("mousedown", suppressBlankDoubleClick, true);
   document.addEventListener("dblclick", suppressBlankDoubleClick, true);
+  window.addEventListener("openharness:dsh-sessions", syncNativeSessions);
 
   installPreferenceBridge();
 })();

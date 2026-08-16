@@ -23,12 +23,13 @@ assets or imply endorsement by or affiliation with DeepSeek.
 - Automatic loopback port selection to avoid conflicts
 - Shared configuration, credentials, sessions, and plugins in `~/.dsh`
 - Runtime telemetry disabled by the desktop launcher
-- Menu-bar tray residency with show, new-window, and quit actions
+- Live Status Bar session menu: five prioritized tasks, 20 more recent
+  sessions, and a link to the complete list in Harness
 - Single-instance lock: a second launch focuses the running instance
 - Automatic backend restart with exponential backoff and a native error dialog
   after repeated failures
-- Multi-window, multi-session: each window is an independent session
-- Windows follow the system dark/light appearance
+- One business window; selecting or creating a session reuses and focuses it
+- The window and native menus follow the configured dark/light appearance and locale
 - Loads `PATH` and `DEEPSEEK_*` variables from the login shell with a bounded
   timeout so Finder launches can find user tools and configured credentials;
   inherited DeepSeek variables take precedence
@@ -62,10 +63,11 @@ upstream [user guide](https://github.com/deepseek-ai/deepseek-harness/tree/maste
 ## How It Works
 
 1. Tauri launches the bundled Node.js executable and the published
-   `@deepseek-ai/dsh` package with `dsh web --port 0`.
+   `@deepseek-ai/dsh` package with the bundled OpenHarness bridge patch and an
+   automatically selected port.
 2. The runtime selects an available local port and reports its loopback URL.
 3. OpenHarness validates that URL and opens it in a native webview.
-4. Closing a window hides it to the menu-bar tray. Quitting from the tray or
+4. Closing the window hides it to the Status Bar. Quitting from its menu or
    with `Cmd+Q` terminates the bundled runtime process.
 
 The desktop host does not fork or reimplement the upstream Web UI. The runtime

@@ -1,0 +1,3 @@
+- insert:
+    - id: openharness-native-bridge
+      name: '@openharness/native-bridge'
