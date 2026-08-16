@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sync-dsh-preferences"
+description = "Enables the sync_dsh_preferences command without any pre-configured scope."
+commands.allow = ["sync_dsh_preferences"]
+
+[[permission]]
+identifier = "deny-sync-dsh-preferences"
+description = "Denies the sync_dsh_preferences command without any pre-configured scope."
+commands.deny = ["sync_dsh_preferences"]

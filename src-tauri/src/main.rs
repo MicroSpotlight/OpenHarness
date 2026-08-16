@@ -18,9 +18,9 @@ use std::time::{Duration, Instant};
 
 use semver::Version;
 use tauri::{
-    menu::{Menu, MenuItem},
+    menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, Wry,
+    AppHandle, Manager, RunEvent, Theme, WebviewUrl, WebviewWindowBuilder, Wry,
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_updater::UpdaterExt;
@@ -32,8 +32,24 @@ const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RESTART_ATTEMPTS: u32 = 3;
 /// Runtime long enough to treat an earlier failure streak as recovered.
 const STABLE_BACKEND_UPTIME: Duration = Duration::from_secs(30);
-const UPDATE_MENU_LABEL: &str = "检查更新...";
 const UPDATE_NOTES_LIMIT: usize = 1_200;
+const APP_UPDATE_MENU_ID: &str = "app-update";
+const WEBVIEW_INIT_SCRIPT: &str = include_str!("../webview-init.js");
+
+#[cfg(target_os = "macos")]
+extern "C" {
+    fn openharness_install_webview_context_menu_filter();
+    fn openharness_preferred_native_locale() -> i32;
+}
+
+#[cfg(target_os = "macos")]
+fn install_native_context_menu_filter() {
+    // The native function is process-global and idempotent via dispatch_once.
+    unsafe { openharness_install_webview_context_menu_filter() };
+}
+
+#[cfg(not(target_os = "macos"))]
+fn install_native_context_menu_filter() {}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum UpdateCheckSource {
@@ -41,9 +57,83 @@ enum UpdateCheckSource {
     Manual,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NativeLocale {
+    Zh,
+    En,
+}
+
+impl NativeLocale {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "zh" => Some(Self::Zh),
+            "en" => Some(Self::En),
+            _ => None,
+        }
+    }
+
+    fn text(self, zh: &'static str, en: &'static str) -> &'static str {
+        match self {
+            Self::Zh => zh,
+            Self::En => en,
+        }
+    }
+}
+
+fn preferred_native_locale() -> NativeLocale {
+    #[cfg(target_os = "macos")]
+    {
+        if unsafe { openharness_preferred_native_locale() } == 1 {
+            NativeLocale::En
+        } else {
+            NativeLocale::Zh
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        NativeLocale::Zh
+    }
+}
+
+#[derive(Clone, Copy)]
+enum UpdateMenuStatus {
+    Idle,
+    Checking,
+    Downloading(Option<u8>),
+    Installing,
+    Restarting,
+}
+
+#[derive(Clone)]
+struct AppMenuItems {
+    about: PredefinedMenuItem<Wry>,
+    update: MenuItem<Wry>,
+    services: PredefinedMenuItem<Wry>,
+    hide: PredefinedMenuItem<Wry>,
+    hide_others: PredefinedMenuItem<Wry>,
+    quit: PredefinedMenuItem<Wry>,
+}
+
+#[derive(Clone)]
+struct TrayMenuItems {
+    show: MenuItem<Wry>,
+    new: MenuItem<Wry>,
+    update: MenuItem<Wry>,
+    quit: MenuItem<Wry>,
+}
+
+#[derive(Clone)]
+struct NativeUi {
+    locale: Arc<Mutex<NativeLocale>>,
+    update_status: Arc<Mutex<UpdateMenuStatus>>,
+    app_menu: AppMenuItems,
+    tray_menu: TrayMenuItems,
+}
+
 struct AppUpdateState {
     busy: AtomicBool,
-    menu_item: MenuItem<Wry>,
+    automatic_check_started: AtomicBool,
+    ui: NativeUi,
 }
 
 /// Shared backend state: the running child PID (for quit-time kill), the
@@ -360,8 +450,12 @@ fn backend_supervisor(
 
 /// Surface a native error dialog when the backend repeatedly fails.
 fn show_backend_error(app: &tauri::AppHandle, err: &dyn std::fmt::Display) {
+    let locale = native_locale(app);
     app.dialog()
-        .message(format!("OpenHarness 后端运行失败：{err}"))
+        .message(match locale {
+            NativeLocale::Zh => format!("OpenHarness 后端运行失败：{err}"),
+            NativeLocale::En => format!("The OpenHarness backend failed: {err}"),
+        })
         .title("OpenHarness")
         .kind(MessageDialogKind::Error)
         .show(|_| {});
@@ -375,7 +469,120 @@ fn show_update_message(app: &AppHandle, message: impl Into<String>, kind: Messag
         .show(|_| {});
 }
 
-fn update_prompt(current_version: &str, new_version: &str, notes: Option<&str>) -> String {
+fn update_menu_label(locale: NativeLocale, status: UpdateMenuStatus) -> String {
+    match status {
+        UpdateMenuStatus::Idle => locale
+            .text("检查更新...", "Check for Updates...")
+            .to_string(),
+        UpdateMenuStatus::Checking => locale
+            .text("正在检查更新...", "Checking for Updates...")
+            .to_string(),
+        UpdateMenuStatus::Downloading(Some(percent)) => match locale {
+            NativeLocale::Zh => format!("正在下载更新... {percent}%"),
+            NativeLocale::En => format!("Downloading Update... {percent}%"),
+        },
+        UpdateMenuStatus::Downloading(None) => locale
+            .text("正在下载更新...", "Downloading Update...")
+            .to_string(),
+        UpdateMenuStatus::Installing => locale
+            .text("正在安装更新...", "Installing Update...")
+            .to_string(),
+        UpdateMenuStatus::Restarting => locale.text("正在重启...", "Restarting...").to_string(),
+    }
+}
+
+impl NativeUi {
+    fn locale(&self) -> NativeLocale {
+        *self.locale.lock().unwrap()
+    }
+
+    fn render_update_status(&self, enabled: bool) {
+        let label = update_menu_label(self.locale(), *self.update_status.lock().unwrap());
+        for item in [&self.app_menu.update, &self.tray_menu.update] {
+            let _ = item.set_text(&label);
+            let _ = item.set_enabled(enabled);
+        }
+    }
+
+    fn set_update_status(&self, status: UpdateMenuStatus, enabled: bool) {
+        *self.update_status.lock().unwrap() = status;
+        self.render_update_status(enabled);
+    }
+
+    fn set_locale(&self, locale: NativeLocale, update_enabled: bool) {
+        *self.locale.lock().unwrap() = locale;
+        let _ = self
+            .app_menu
+            .about
+            .set_text(locale.text("关于 OpenHarness", "About OpenHarness"));
+        let _ = self
+            .app_menu
+            .services
+            .set_text(locale.text("服务", "Services"));
+        let _ = self
+            .app_menu
+            .hide
+            .set_text(locale.text("隐藏 OpenHarness", "Hide OpenHarness"));
+        let _ = self
+            .app_menu
+            .hide_others
+            .set_text(locale.text("隐藏其他", "Hide Others"));
+        let _ = self
+            .app_menu
+            .quit
+            .set_text(locale.text("退出 OpenHarness", "Quit OpenHarness"));
+        let _ = self
+            .tray_menu
+            .show
+            .set_text(locale.text("显示主窗口", "Show Main Window"));
+        let _ = self
+            .tray_menu
+            .new
+            .set_text(locale.text("新建窗口", "New Window"));
+        let _ = self.tray_menu.quit.set_text(locale.text("退出", "Quit"));
+        self.render_update_status(update_enabled);
+    }
+}
+
+fn native_locale(app: &AppHandle) -> NativeLocale {
+    app.try_state::<AppUpdateState>()
+        .map(|state| state.ui.locale())
+        .unwrap_or(NativeLocale::Zh)
+}
+
+#[tauri::command]
+fn sync_dsh_preferences(app: AppHandle, theme: String, locale: String) -> Result<(), String> {
+    let theme = match theme.as_str() {
+        "light" => Some(Theme::Light),
+        "dark" => Some(Theme::Dark),
+        "system" => None,
+        _ => return Err("unsupported DSH theme preference".to_string()),
+    };
+    let locale = NativeLocale::parse(&locale)
+        .ok_or_else(|| "unsupported DSH locale preference".to_string())?;
+    let should_check_for_updates = {
+        let state = app
+            .try_state::<AppUpdateState>()
+            .ok_or_else(|| "native UI state is not ready".to_string())?;
+
+        app.set_theme(theme);
+        state
+            .ui
+            .set_locale(locale, !state.busy.load(Ordering::SeqCst));
+        !state.automatic_check_started.swap(true, Ordering::SeqCst)
+    };
+    if should_check_for_updates {
+        request_update_check(app, UpdateCheckSource::Automatic);
+    }
+    Ok(())
+}
+
+fn update_prompt(
+    locale: NativeLocale,
+    current_version: &str,
+    new_version: &str,
+    notes: Option<&str>,
+) -> String {
     let notes = notes.map(str::trim).filter(|notes| !notes.is_empty());
     let notes = notes.map(|notes| {
         let mut chars = notes.chars();
@@ -387,12 +594,18 @@ fn update_prompt(current_version: &str, new_version: &str, notes: Option<&str>) 
         }
     });
 
-    match notes {
-        Some(notes) => format!(
+    match (locale, notes) {
+        (NativeLocale::Zh, Some(notes)) => format!(
             "发现 OpenHarness {new_version}（当前版本 {current_version}）。\n\n{notes}\n\n立即下载并安装吗？安装完成后应用会自动重启。"
         ),
-        None => format!(
+        (NativeLocale::Zh, None) => format!(
             "发现 OpenHarness {new_version}（当前版本 {current_version}）。\n\n立即下载并安装吗？安装完成后应用会自动重启。"
+        ),
+        (NativeLocale::En, Some(notes)) => format!(
+            "OpenHarness {new_version} is available (current version: {current_version}).\n\n{notes}\n\nDownload and install it now? The app will restart automatically after installation."
+        ),
+        (NativeLocale::En, None) => format!(
+            "OpenHarness {new_version} is available (current version: {current_version}).\n\nDownload and install it now? The app will restart automatically after installation."
         ),
     }
 }
@@ -479,23 +692,37 @@ fn manifest_build_number(manifest: &serde_json::Value) -> Result<&str, String> {
         .ok_or_else(|| "update manifest is missing build_number".to_string())
 }
 
-fn version_label(version: &str, build_number: &str) -> String {
-    format!("{version}，构建 {build_number}")
+fn version_label(locale: NativeLocale, version: &str, build_number: &str) -> String {
+    match locale {
+        NativeLocale::Zh => format!("{version}，构建 {build_number}"),
+        NativeLocale::En => format!("{version}, build {build_number}"),
+    }
+}
+
+fn up_to_date_message(locale: NativeLocale, version: &str, build_number: &str) -> String {
+    let version = version_label(locale, version, build_number);
+    match locale {
+        NativeLocale::Zh => format!("当前已是最新版本（{version}）。"),
+        NativeLocale::En => format!("OpenHarness {version} is up to date."),
+    }
 }
 
 fn finish_update_operation(app: &AppHandle) {
     let state = app.state::<AppUpdateState>();
     state.busy.store(false, Ordering::SeqCst);
-    let _ = state.menu_item.set_text(UPDATE_MENU_LABEL);
-    let _ = state.menu_item.set_enabled(true);
+    state.ui.set_update_status(UpdateMenuStatus::Idle, true);
 }
 
 fn request_update_check(app: AppHandle, source: UpdateCheckSource) {
+    let locale = native_locale(&app);
     if cfg!(debug_assertions) {
         if source == UpdateCheckSource::Manual {
             show_update_message(
                 &app,
-                "开发构建不会检查或安装正式更新。",
+                locale.text(
+                    "开发构建不会检查或安装正式更新。",
+                    "Development builds do not check for or install release updates.",
+                ),
                 MessageDialogKind::Info,
             );
         }
@@ -505,31 +732,43 @@ fn request_update_check(app: AppHandle, source: UpdateCheckSource) {
     let state = app.state::<AppUpdateState>();
     if state.busy.swap(true, Ordering::SeqCst) {
         if source == UpdateCheckSource::Manual {
-            show_update_message(&app, "更新检查或安装正在进行中。", MessageDialogKind::Info);
+            show_update_message(
+                &app,
+                locale.text(
+                    "更新检查或安装正在进行中。",
+                    "An update check or installation is already in progress.",
+                ),
+                MessageDialogKind::Info,
+            );
         }
         return;
     }
-    let _ = state.menu_item.set_enabled(false);
-    let _ = state.menu_item.set_text("正在检查更新...");
+    state
+        .ui
+        .set_update_status(UpdateMenuStatus::Checking, false);
 
     tauri::async_runtime::spawn(async move {
         let current_version = app.package_info().version.clone();
-        let current_build_number =
-            match configured_build_number(app.config().bundle.macos.bundle_version.as_deref()) {
-                Ok(build_number) => build_number,
-                Err(error) => {
-                    eprintln!("[updater] {error}");
-                    if source == UpdateCheckSource::Manual {
-                        show_update_message(
+        let current_build_number = match configured_build_number(
+            app.config().bundle.macos.bundle_version.as_deref(),
+        ) {
+            Ok(build_number) => build_number,
+            Err(error) => {
+                eprintln!("[updater] {error}");
+                if source == UpdateCheckSource::Manual {
+                    show_update_message(
                             &app,
-                            "应用构建号配置无效，无法检查更新。",
+                            locale.text(
+                                "应用构建号配置无效，无法检查更新。",
+                                "The application build number is invalid, so updates cannot be checked.",
+                            ),
                             MessageDialogKind::Error,
                         );
-                    }
-                    finish_update_operation(&app);
-                    return;
                 }
-            };
+                finish_update_operation(&app);
+                return;
+            }
+        };
         let comparison_version = current_version.clone();
         let check_result = match app
             .updater_builder()
@@ -549,9 +788,10 @@ fn request_update_check(app: AppHandle, source: UpdateCheckSource) {
                 if source == UpdateCheckSource::Manual {
                     show_update_message(
                         &app,
-                        format!(
-                            "当前已是最新版本（{}）。",
-                            version_label(&current_version.to_string(), &current_build_number)
+                        up_to_date_message(
+                            locale,
+                            &current_version.to_string(),
+                            &current_build_number,
                         ),
                         MessageDialogKind::Info,
                     );
@@ -564,7 +804,10 @@ fn request_update_check(app: AppHandle, source: UpdateCheckSource) {
                 if source == UpdateCheckSource::Manual {
                     show_update_message(
                         &app,
-                        format!("检查更新失败：{error}"),
+                        match locale {
+                            NativeLocale::Zh => format!("检查更新失败：{error}"),
+                            NativeLocale::En => format!("Failed to check for updates: {error}"),
+                        },
                         MessageDialogKind::Error,
                     );
                 }
@@ -580,7 +823,10 @@ fn request_update_check(app: AppHandle, source: UpdateCheckSource) {
                 if source == UpdateCheckSource::Manual {
                     show_update_message(
                         &app,
-                        "更新清单缺少有效的构建号。",
+                        locale.text(
+                            "更新清单缺少有效的构建号。",
+                            "The update manifest does not contain a valid build number.",
+                        ),
                         MessageDialogKind::Error,
                     );
                 }
@@ -598,7 +844,14 @@ fn request_update_check(app: AppHandle, source: UpdateCheckSource) {
             Err(error) => {
                 eprintln!("[updater] {error}");
                 if source == UpdateCheckSource::Manual {
-                    show_update_message(&app, "更新版本信息无效。", MessageDialogKind::Error);
+                    show_update_message(
+                        &app,
+                        locale.text(
+                            "更新版本信息无效。",
+                            "The update version information is invalid.",
+                        ),
+                        MessageDialogKind::Error,
+                    );
                 }
                 finish_update_operation(&app);
                 return;
@@ -608,10 +861,7 @@ fn request_update_check(app: AppHandle, source: UpdateCheckSource) {
             if source == UpdateCheckSource::Manual {
                 show_update_message(
                     &app,
-                    format!(
-                        "当前已是最新版本（{}）。",
-                        version_label(&current_version.to_string(), &current_build_number)
-                    ),
+                    up_to_date_message(locale, &current_version.to_string(), &current_build_number),
                     MessageDialogKind::Info,
                 );
             }
@@ -620,8 +870,9 @@ fn request_update_check(app: AppHandle, source: UpdateCheckSource) {
         }
 
         let prompt = update_prompt(
-            &version_label(&current_version.to_string(), &current_build_number),
-            &version_label(&update.version, remote_build_number),
+            locale,
+            &version_label(locale, &current_version.to_string(), &current_build_number),
+            &version_label(locale, &update.version, remote_build_number),
             update.body.as_deref(),
         );
         let dialog_app = app.clone();
@@ -629,11 +880,11 @@ fn request_update_check(app: AppHandle, source: UpdateCheckSource) {
             dialog_app
                 .dialog()
                 .message(prompt)
-                .title("OpenHarness 更新")
+                .title(locale.text("OpenHarness 更新", "OpenHarness Update"))
                 .kind(MessageDialogKind::Info)
                 .buttons(MessageDialogButtons::OkCancelCustom(
-                    "立即更新".to_string(),
-                    "稍后".to_string(),
+                    locale.text("立即更新", "Update Now").to_string(),
+                    locale.text("稍后", "Later").to_string(),
                 ))
                 .blocking_show()
         })
@@ -645,8 +896,8 @@ fn request_update_check(app: AppHandle, source: UpdateCheckSource) {
             return;
         }
 
-        let menu_item = app.state::<AppUpdateState>().menu_item.clone();
-        let _ = menu_item.set_text("正在下载更新...");
+        let native_ui = app.state::<AppUpdateState>().ui.clone();
+        native_ui.set_update_status(UpdateMenuStatus::Downloading(None), false);
         let mut downloaded = 0u64;
         let mut last_bucket = None;
         let install_result = update
@@ -657,26 +908,32 @@ fn request_update_check(app: AppHandle, source: UpdateCheckSource) {
                         let bucket = percent / 5;
                         if last_bucket != Some(bucket) {
                             last_bucket = Some(bucket);
-                            let _ = menu_item.set_text(format!("正在下载更新... {percent}%"));
+                            native_ui.set_update_status(
+                                UpdateMenuStatus::Downloading(Some(percent)),
+                                false,
+                            );
                         }
                     }
                 },
                 || {
-                    let _ = menu_item.set_text("正在安装更新...");
+                    native_ui.set_update_status(UpdateMenuStatus::Installing, false);
                 },
             )
             .await;
 
         match install_result {
             Ok(()) => {
-                let _ = menu_item.set_text("正在重启...");
+                native_ui.set_update_status(UpdateMenuStatus::Restarting, false);
                 app.restart();
             }
             Err(error) => {
                 eprintln!("[updater] update installation failed: {error}");
                 show_update_message(
                     &app,
-                    format!("更新安装失败：{error}"),
+                    match locale {
+                        NativeLocale::Zh => format!("更新安装失败：{error}"),
+                        NativeLocale::En => format!("Failed to install the update: {error}"),
+                    },
                     MessageDialogKind::Error,
                 );
                 finish_update_operation(&app);
@@ -715,6 +972,9 @@ fn create_window(app: &tauri::AppHandle, state: &Arc<BackendState>) -> tauri::Re
         .title("OpenHarness")
         .inner_size(1280.0, 800.0)
         .min_inner_size(900.0, 600.0)
+        // Wry's macOS acceptsFirstMouse override preserves the activation click.
+        .accept_first_mouse(true)
+        .initialization_script(WEBVIEW_INIT_SCRIPT)
         .build()?;
     Ok(())
 }
@@ -728,12 +988,93 @@ fn show_main_window(app: &tauri::AppHandle) {
     }
 }
 
+/// Build the macOS application menu with the native About panel and update command.
+fn build_app_menu(
+    app: &AppHandle,
+    locale: NativeLocale,
+) -> tauri::Result<(Menu<Wry>, AppMenuItems)> {
+    let package = app.package_info();
+    let about = PredefinedMenuItem::about(
+        app,
+        Some(locale.text("关于 OpenHarness", "About OpenHarness")),
+        None,
+    )?;
+    let update = MenuItem::with_id(
+        app,
+        APP_UPDATE_MENU_ID,
+        update_menu_label(locale, UpdateMenuStatus::Idle),
+        true,
+        None::<&str>,
+    )?;
+    let services = PredefinedMenuItem::services(app, Some(locale.text("服务", "Services")))?;
+    let hide = PredefinedMenuItem::hide(
+        app,
+        Some(locale.text("隐藏 OpenHarness", "Hide OpenHarness")),
+    )?;
+    let hide_others =
+        PredefinedMenuItem::hide_others(app, Some(locale.text("隐藏其他", "Hide Others")))?;
+    let quit = PredefinedMenuItem::quit(
+        app,
+        Some(locale.text("退出 OpenHarness", "Quit OpenHarness")),
+    )?;
+    let app_menu = Submenu::with_items(
+        app,
+        package.name.clone(),
+        true,
+        &[
+            &about,
+            &PredefinedMenuItem::separator(app)?,
+            &update,
+            &PredefinedMenuItem::separator(app)?,
+            &services,
+            &PredefinedMenuItem::separator(app)?,
+            &hide,
+            &hide_others,
+            &PredefinedMenuItem::separator(app)?,
+            &quit,
+        ],
+    )?;
+    let menu = Menu::default(app)?;
+    menu.remove_at(0)?
+        .ok_or_else(|| std::io::Error::other("default application menu is missing"))?;
+    menu.prepend(&app_menu)?;
+    Ok((
+        menu,
+        AppMenuItems {
+            about,
+            update,
+            services,
+            hide,
+            hide_others,
+            quit,
+        },
+    ))
+}
+
 /// Build the menu-bar (tray) icon and its menu.
-fn build_tray(app: &tauri::AppHandle) -> tauri::Result<AppUpdateState> {
-    let show = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
-    let new = MenuItem::with_id(app, "new", "新建窗口", true, None::<&str>)?;
-    let update = MenuItem::with_id(app, "update", UPDATE_MENU_LABEL, true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+fn build_tray(app: &tauri::AppHandle, locale: NativeLocale) -> tauri::Result<TrayMenuItems> {
+    let show = MenuItem::with_id(
+        app,
+        "show",
+        locale.text("显示主窗口", "Show Main Window"),
+        true,
+        None::<&str>,
+    )?;
+    let new = MenuItem::with_id(
+        app,
+        "new",
+        locale.text("新建窗口", "New Window"),
+        true,
+        None::<&str>,
+    )?;
+    let update = MenuItem::with_id(
+        app,
+        "update",
+        update_menu_label(locale, UpdateMenuStatus::Idle),
+        true,
+        None::<&str>,
+    )?;
+    let quit = MenuItem::with_id(app, "quit", locale.text("退出", "Quit"), true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &new, &update, &quit])?;
 
     let tray_app = app.clone();
@@ -762,13 +1103,20 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<AppUpdateState> {
             }
         })
         .build(app)?;
-    Ok(AppUpdateState {
-        busy: AtomicBool::new(false),
-        menu_item: update,
+    Ok(TrayMenuItems {
+        show,
+        new,
+        update,
+        quit,
     })
 }
 
 fn main() {
+    let initial_locale = preferred_native_locale();
+    let app_menu_slot = Arc::new(Mutex::new(None::<AppMenuItems>));
+    let menu_slot = app_menu_slot.clone();
+    let setup_slot = app_menu_slot;
+
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             // A second launch was requested: re-focus the existing instance.
@@ -776,10 +1124,43 @@ fn main() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .setup(|app| {
+        .invoke_handler(tauri::generate_handler![sync_dsh_preferences])
+        .menu(move |app| {
+            let (menu, items) = build_app_menu(app, initial_locale)?;
+            *menu_slot.lock().unwrap() = Some(items);
+            Ok(menu)
+        })
+        .on_menu_event(|app, event| {
+            if event.id.as_ref() == APP_UPDATE_MENU_ID {
+                request_update_check(app.clone(), UpdateCheckSource::Manual);
+            }
+        })
+        .setup(move |app| {
+            install_native_context_menu_filter();
+
             let resource_dir = app.path().resource_dir()?;
             let home = app.path().home_dir()?;
             let state = Arc::new(BackendState::new());
+            app.manage(state.clone());
+
+            let app_menu = setup_slot
+                .lock()
+                .unwrap()
+                .take()
+                .ok_or_else(|| std::io::Error::other("application menu items are missing"))?;
+            let tray_menu = build_tray(app.handle(), initial_locale)?;
+            let ui = NativeUi {
+                locale: Arc::new(Mutex::new(initial_locale)),
+                update_status: Arc::new(Mutex::new(UpdateMenuStatus::Idle)),
+                app_menu,
+                tray_menu,
+            };
+            ui.set_locale(initial_locale, true);
+            app.manage(AppUpdateState {
+                busy: AtomicBool::new(false),
+                automatic_check_started: AtomicBool::new(false),
+                ui,
+            });
 
             // Load DeepSeek env vars (e.g. DEEPSEEK_API_KEY) from the login
             // shell once, then hand them to the backend supervisor.
@@ -805,11 +1186,6 @@ fn main() {
             // Wait for the backend's first URL before opening the window.
             state.wait_url(STARTUP_TIMEOUT);
             let _ = create_window(app.handle(), &state);
-
-            app.manage(state);
-            let update_state = build_tray(app.handle())?;
-            app.manage(update_state);
-            request_update_check(app.handle().clone(), UpdateCheckSource::Automatic);
 
             Ok(())
         })
@@ -916,9 +1292,34 @@ mod tests {
     }
 
     #[test]
+    fn parses_only_supported_dsh_locales() {
+        assert!(matches!(NativeLocale::parse("zh"), Some(NativeLocale::Zh)));
+        assert!(matches!(NativeLocale::parse("en"), Some(NativeLocale::En)));
+        assert!(NativeLocale::parse("zh-CN").is_none());
+        assert!(NativeLocale::parse("fr").is_none());
+    }
+
+    #[test]
+    fn localizes_native_update_menu_status() {
+        assert_eq!(
+            update_menu_label(NativeLocale::Zh, UpdateMenuStatus::Idle),
+            "检查更新..."
+        );
+        assert_eq!(
+            update_menu_label(NativeLocale::En, UpdateMenuStatus::Downloading(Some(42))),
+            "Downloading Update... 42%"
+        );
+    }
+
+    #[test]
     fn update_prompt_includes_versions_and_truncates_long_notes() {
         let notes = "a".repeat(UPDATE_NOTES_LIMIT + 1);
-        let prompt = update_prompt("0.1.0，构建 41", "0.1.0，构建 42", Some(&notes));
+        let prompt = update_prompt(
+            NativeLocale::Zh,
+            "0.1.0，构建 41",
+            "0.1.0，构建 42",
+            Some(&notes),
+        );
 
         assert!(prompt.contains("构建 41"));
         assert!(prompt.contains("构建 42"));

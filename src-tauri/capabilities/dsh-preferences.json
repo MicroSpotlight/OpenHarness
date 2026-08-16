@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "dsh-preference-sync",
+  "description": "Allow the bundled loopback DSH UI to synchronize its theme and locale with native OpenHarness chrome.",
+  "local": false,
+  "windows": ["main", "session-*"],
+  "remote": {
+    "urls": [
+      "http://127.0.0.1:*",
+      "http://[\\:\\:1]:*",
+      "http://localhost:*"
+    ]
+  },
+  "permissions": ["allow-sync-dsh-preferences"]
+}
