@@ -29,8 +29,9 @@ assets or imply endorsement by or affiliation with DeepSeek.
   after repeated failures
 - Multi-window, multi-session: each window is an independent session
 - Windows follow the system dark/light appearance
-- Loads `DEEPSEEK_*` variables from the login shell so Finder launches can use
-  configured credentials; inherited environment variables take precedence
+- Loads `PATH` and `DEEPSEEK_*` variables from the login shell with a bounded
+  timeout so Finder launches can find user tools and configured credentials;
+  inherited DeepSeek variables take precedence
 
 ## Requirements
 

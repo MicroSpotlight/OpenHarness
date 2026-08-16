@@ -9,12 +9,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::cmp::Ordering as CompareOrdering;
-use std::io::{BufRead, BufReader};
+use std::collections::HashSet;
+use std::ffi::{OsStr, OsString};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
+
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 
 use semver::Version;
 use tauri::{
@@ -32,6 +37,10 @@ const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RESTART_ATTEMPTS: u32 = 3;
 /// Runtime long enough to treat an earlier failure streak as recovered.
 const STABLE_BACKEND_UPTIME: Duration = Duration::from_secs(30);
+/// Keep a slow or broken shell profile from blocking desktop startup.
+const SHELL_ENV_TIMEOUT: Duration = Duration::from_secs(5);
+/// A normal login environment is small; larger output is treated as invalid.
+const SHELL_ENV_OUTPUT_LIMIT: usize = 1024 * 1024;
 const UPDATE_NOTES_LIMIT: usize = 1_200;
 const APP_UPDATE_MENU_ID: &str = "app-update";
 const WEBVIEW_INIT_SCRIPT: &str = include_str!("../webview-init.js");
@@ -280,28 +289,157 @@ fn resolve_runtime(resource_dir: &Path) -> Result<(PathBuf, PathBuf), String> {
     ))
 }
 
-/// Read DeepSeek-related environment variables from the user's login shell
-/// (`~/.zshrc` etc.). The Finder does not inherit shell environment, so a
-/// `DEEPSEEK_API_KEY` exported in the shell profile would otherwise be missing
-/// from the backend. Runs once at startup; the token value is never logged.
-fn load_shell_env() -> Vec<(String, String)> {
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
-    let Ok(output) = Command::new(&shell).args(["-lic", "env"]).output() else {
+fn read_bounded<R: Read>(mut reader: R, limit: usize) -> Result<Vec<u8>, std::io::Error> {
+    let mut output = Vec::new();
+    let mut buffer = [0u8; 8192];
+    let mut overflowed = false;
+
+    loop {
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+
+        let remaining = limit.saturating_sub(output.len());
+        output.extend_from_slice(&buffer[..count.min(remaining)]);
+        overflowed |= count > remaining;
+    }
+
+    if overflowed {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("login shell environment exceeded {limit} bytes"),
+        ))
+    } else {
+        Ok(output)
+    }
+}
+
+fn command_stdout_with_timeout(
+    command: &mut Command,
+    timeout: Duration,
+    output_limit: usize,
+) -> Result<Vec<u8>, std::io::Error> {
+    // Shell profiles can start child processes. A dedicated process group lets
+    // timeout and read-failure paths clean up the complete temporary tree.
+    #[cfg(unix)]
+    command.process_group(0);
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let stdout = child.stdout.take().expect("stdout was piped");
+    let (output_tx, output_rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = output_tx.send(read_bounded(stdout, output_limit));
+    });
+
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {}
+            Err(error) => {
+                terminate_command(&mut child);
+                return Err(error);
+            }
+        }
+        if Instant::now() >= deadline {
+            terminate_command(&mut child);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!(
+                    "login shell environment timed out after {} seconds",
+                    timeout.as_secs()
+                ),
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+
+    let output = match output_rx.recv_timeout(Duration::from_secs(1)) {
+        Ok(output) => output?,
+        Err(_) => {
+            terminate_command(&mut child);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "timed out reading login shell environment",
+            ));
+        }
+    };
+    if !status.success() {
+        return Err(std::io::Error::other(format!(
+            "login shell environment command exited with {status}"
+        )));
+    }
+    Ok(output)
+}
+
+fn terminate_command(child: &mut Child) {
+    #[cfg(unix)]
+    unsafe {
+        // The child is the process-group leader because `process_group(0)` was
+        // set before spawn. A negative PID targets every process in that group.
+        libc::kill(-(child.id() as i32), libc::SIGKILL);
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+fn valid_env_key(key: &str) -> bool {
+    let mut bytes = key.bytes();
+    matches!(bytes.next(), Some(b'A'..=b'Z' | b'a'..=b'z' | b'_'))
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+fn parse_shell_env(output: &[u8]) -> Vec<(String, String)> {
+    let Some(marker) = output.iter().position(|byte| *byte == 0) else {
         return Vec::new();
     };
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout
-        .lines()
-        .filter_map(|line| {
-            let (key, value) = line.split_once('=')?;
-            let key = key.trim();
-            if key.starts_with("DEEPSEEK_") && !value.is_empty() {
+
+    output[marker + 1..]
+        .split(|byte| *byte == 0)
+        .filter_map(|entry| {
+            let entry = std::str::from_utf8(entry).ok()?;
+            let (key, value) = entry.split_once('=')?;
+            if !value.is_empty()
+                && valid_env_key(key)
+                && (key == "PATH" || key.starts_with("DEEPSEEK_"))
+            {
                 Some((key.to_string(), value.to_string()))
             } else {
                 None
             }
         })
         .collect()
+}
+
+fn merge_path_values(shell_path: &str, inherited_path: Option<&OsStr>) -> OsString {
+    let mut seen = HashSet::new();
+    let mut paths = Vec::new();
+    let sources = std::iter::once(OsStr::new(shell_path)).chain(inherited_path);
+
+    for path in sources.flat_map(std::env::split_paths) {
+        if !path.as_os_str().is_empty() && seen.insert(path.clone()) {
+            paths.push(path);
+        }
+    }
+
+    std::env::join_paths(paths).unwrap_or_else(|_| OsString::from(shell_path))
+}
+
+/// Read PATH and DeepSeek variables from the user's login shell. Finder does
+/// not inherit the login environment, so desktop launches otherwise miss user
+/// tools and credentials. Values are bounded and never logged.
+fn load_shell_env() -> Result<Vec<(String, String)>, std::io::Error> {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    let output = command_stdout_with_timeout(
+        Command::new(&shell).args(["-lic", "printf '\\0'; exec /usr/bin/env -0"]),
+        SHELL_ENV_TIMEOUT,
+        SHELL_ENV_OUTPUT_LIMIT,
+    )?;
+    Ok(parse_shell_env(&output))
 }
 
 /// Spawn the DSH web server and block until it reports its canonical URL.
@@ -321,10 +459,11 @@ fn spawn_harness(
         .current_dir(home)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    // Inject the DeepSeek env vars read from the login shell. Only fill gaps:
-    // an inherited (e.g. terminal-launched) value wins.
+    let inherited_path = std::env::var_os("PATH");
     for (key, value) in shell_env {
-        if std::env::var_os(key).is_none() {
+        if key == "PATH" {
+            command.env(key, merge_path_values(value, inherited_path.as_deref()));
+        } else if !std::env::var_os(key).is_some_and(|value| !value.is_empty()) {
             command.env(key, value);
         }
     }
@@ -1162,15 +1301,27 @@ fn main() {
                 ui,
             });
 
-            // Load DeepSeek env vars (e.g. DEEPSEEK_API_KEY) from the login
-            // shell once, then hand them to the backend supervisor.
-            let shell_env = load_shell_env();
-            if !shell_env.is_empty() {
-                eprintln!(
-                    "[harness] loaded {} DeepSeek env var(s) from the login shell",
-                    shell_env.len()
-                );
-            }
+            // Finder launches lack the login PATH and shell-configured API
+            // credentials. Failure here is non-fatal: inherited values remain.
+            let shell_env = match load_shell_env() {
+                Ok(shell_env) => {
+                    let has_path = shell_env.iter().any(|(key, _)| key == "PATH");
+                    let deepseek_count = shell_env
+                        .iter()
+                        .filter(|(key, _)| key.starts_with("DEEPSEEK_"))
+                        .count();
+                    eprintln!(
+                        "[harness] login shell environment loaded (PATH: {has_path}, DeepSeek variables: {deepseek_count})"
+                    );
+                    shell_env
+                }
+                Err(error) => {
+                    eprintln!(
+                        "[harness] login shell environment unavailable; using inherited environment: {error}"
+                    );
+                    Vec::new()
+                }
+            };
 
             // Supervise the backend in a background thread.
             let supervisor = std::thread::spawn({
@@ -1222,6 +1373,64 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shell_env_parser_imports_only_path_and_deepseek_variables() {
+        let output = b"shell banner without newline\0PATH=/opt/homebrew/bin:/usr/bin\0\
+DEEPSEEK_API_KEY=secret\0\
+DEEPSEEK_BASE_URL=https://example.invalid\0\
+DEEPSEEK_EMPTY=\0\
+HOME=/Users/example\0\
+DYLD_INSERT_LIBRARIES=/tmp/injected.dylib\0\
+INVALID-KEY=value\0";
+
+        assert_eq!(
+            parse_shell_env(output),
+            vec![
+                ("PATH".to_string(), "/opt/homebrew/bin:/usr/bin".to_string()),
+                ("DEEPSEEK_API_KEY".to_string(), "secret".to_string()),
+                (
+                    "DEEPSEEK_BASE_URL".to_string(),
+                    "https://example.invalid".to_string()
+                ),
+            ]
+        );
+        assert!(parse_shell_env(b"PATH=/unmarked/bin\0").is_empty());
+    }
+
+    #[test]
+    fn shell_path_precedes_and_deduplicates_inherited_path() {
+        assert_eq!(
+            merge_path_values(
+                "/opt/homebrew/bin:/usr/bin",
+                Some(OsStr::new("/usr/bin:/bin:/usr/sbin"))
+            ),
+            OsString::from("/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin")
+        );
+    }
+
+    #[test]
+    fn bounded_reader_rejects_oversized_shell_output() {
+        let error = read_bounded(std::io::Cursor::new(b"12345"), 4).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn shell_environment_command_honors_timeout() {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "sleep 30 & wait"]);
+        let started_at = Instant::now();
+        let error = command_stdout_with_timeout(
+            &mut command,
+            Duration::from_millis(30),
+            SHELL_ENV_OUTPUT_LIMIT,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(started_at.elapsed() < Duration::from_secs(1));
+    }
 
     #[test]
     fn parses_supported_loopback_urls() {

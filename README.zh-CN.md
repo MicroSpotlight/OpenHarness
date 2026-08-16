@@ -24,7 +24,7 @@ OpenHarness 由 MicroSpotlight 独立开发。为避免与 DeepSeek 品牌产生
 - 后端崩溃自动重启（指数退避），连续失败弹原生错误提示窗
 - 多窗口多会话：每个窗口对应一个独立会话
 - 窗口跟随系统深色/浅色外观
-- 启动时从登录 shell 加载 `DEEPSEEK_API_KEY` 等 `DEEPSEEK_*` 环境变量注入后端（Finder 启动也能拿到 token；已继承的环境变量优先）
+- 启动时限时从登录 shell 加载 `PATH` 和 `DEEPSEEK_API_KEY` 等 `DEEPSEEK_*` 环境变量注入后端（Finder 启动也能找到用户工具和 token；已继承的 DeepSeek 环境变量优先）
 
 ## 系统要求
 

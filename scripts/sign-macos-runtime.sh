@@ -10,7 +10,7 @@ fi
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/src-tauri/runtime"
-APP_ENTITLEMENTS="${REPO_ROOT}/src-tauri/OpenHarness.entitlements"
+NODE_ENTITLEMENTS="${REPO_ROOT}/src-tauri/NodeRuntime.entitlements"
 
 if [[ ! -x "${RUNTIME_DIR}/node" ]]; then
   echo "error: ${RUNTIME_DIR}/node is missing or not executable" >&2
@@ -49,7 +49,7 @@ sign_macho() {
 # The upstream Node binary carries broad development entitlements. Keep only
 # V8's executable-memory permissions and library loading for user-installed
 # native DSH plugins, then sign bundled Mach-O code with the same team.
-sign_macho "${RUNTIME_DIR}/node" "${APP_ENTITLEMENTS}"
+sign_macho "${RUNTIME_DIR}/node" "${NODE_ENTITLEMENTS}"
 
 while IFS= read -r -d '' path; do
   if [[ "${path}" == "${RUNTIME_DIR}/node" ]]; then
