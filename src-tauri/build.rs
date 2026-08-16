@@ -75,9 +75,8 @@ fn main() {
     #[cfg(target_os = "macos")]
     compile_native_context_menu(&manifest_dir);
 
-    tauri_build::try_build(
-        tauri_build::Attributes::new()
-            .app_manifest(tauri_build::AppManifest::new().commands(&["sync_dsh_preferences"])),
-    )
+    tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
+        tauri_build::AppManifest::new().commands(&["sync_dsh_preferences", "sync_dsh_sessions"]),
+    ))
     .expect("failed to build Tauri application metadata")
 }

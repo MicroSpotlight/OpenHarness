@@ -1,8 +1,8 @@
 //! Native desktop host for OpenHarness.
 //!
 //! Spawns the bundled `dsh web` server as a supervised child process (auto
-//! restart on crash), hosts the browser UI in native windows (one window =
-//! one session), lives in the macOS menu bar (tray), and enforces a single
+//! restart on crash), hosts the browser UI in one native window, exposes live
+//! task state in the macOS menu bar, and enforces a single
 //! app instance. The bundled Node runtime and `@deepseek-ai/dsh` node_modules
 //! live under the app's resource directory (`runtime/**` in tauri.conf.json).
 
@@ -14,8 +14,8 @@ use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{mpsc, Arc, Condvar, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 #[cfg(unix)]
@@ -24,12 +24,18 @@ use std::os::unix::process::CommandExt;
 use semver::Version;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
-    tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
+    tray::{TrayIcon, TrayIconBuilder},
     AppHandle, Manager, RunEvent, Theme, WebviewUrl, WebviewWindowBuilder, Wry,
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_updater::UpdaterExt;
 use url::{Host, Url};
+
+mod status_bar;
+
+use status_bar::{select_sessions, validate_snapshot, SessionMenuEntry, SessionMenuSnapshot};
+#[cfg(test)]
+use status_bar::{HISTORY_SESSION_LIMIT, TOP_SESSION_LIMIT};
 
 /// How long to wait for the DSH server to print its URL before giving up.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -43,6 +49,8 @@ const SHELL_ENV_TIMEOUT: Duration = Duration::from_secs(5);
 const SHELL_ENV_OUTPUT_LIMIT: usize = 1024 * 1024;
 const UPDATE_NOTES_LIMIT: usize = 1_200;
 const APP_UPDATE_MENU_ID: &str = "app-update";
+const SESSION_MENU_LABEL_LIMIT: usize = 96;
+const SESSION_MENU_ID_PREFIX: &str = "session:";
 const WEBVIEW_INIT_SCRIPT: &str = include_str!("../webview-init.js");
 
 #[cfg(target_os = "macos")]
@@ -125,10 +133,8 @@ struct AppMenuItems {
 
 #[derive(Clone)]
 struct TrayMenuItems {
-    show: MenuItem<Wry>,
-    new: MenuItem<Wry>,
-    update: MenuItem<Wry>,
-    quit: MenuItem<Wry>,
+    tray: TrayIcon<Wry>,
+    snapshot: Arc<Mutex<SessionMenuSnapshot>>,
 }
 
 #[derive(Clone)]
@@ -146,13 +152,11 @@ struct AppUpdateState {
 }
 
 /// Shared backend state: the running child PID (for quit-time kill), the
-/// current canonical URL (for windows), and coordination flags.
+/// current canonical URL (for the main window), and coordination flags.
 struct BackendState {
     child_pid: Mutex<Option<u32>>,
     url: Mutex<Option<Url>>,
-    url_cv: Condvar,
     quitting: AtomicBool,
-    window_seq: AtomicU32,
 }
 
 impl BackendState {
@@ -160,16 +164,12 @@ impl BackendState {
         Self {
             child_pid: Mutex::new(None),
             url: Mutex::new(None),
-            url_cv: Condvar::new(),
             quitting: AtomicBool::new(false),
-            window_seq: AtomicU32::new(0),
         }
     }
 
     fn set_url(&self, url: Url) {
-        let mut guard = self.url.lock().unwrap();
-        *guard = Some(url);
-        self.url_cv.notify_all();
+        *self.url.lock().unwrap() = Some(url);
     }
 
     fn mark_stopped(&self) {
@@ -179,15 +179,6 @@ impl BackendState {
 
     fn current_url(&self) -> Option<Url> {
         self.url.lock().unwrap().clone()
-    }
-
-    fn wait_url(&self, timeout: Duration) -> Option<Url> {
-        let guard = self.url.lock().unwrap();
-        let (guard, _) = self
-            .url_cv
-            .wait_timeout_while(guard, timeout, |url| url.is_none())
-            .unwrap();
-        guard.clone()
     }
 }
 
@@ -265,10 +256,11 @@ fn restart_delay(failures: u32) -> Duration {
     Duration::from_secs(2u64.saturating_pow(failures.min(6)).min(30))
 }
 
-/// Locate the bundled Node binary and the `dsh` entry script inside the app
+/// Locate the bundled Node binary, `dsh` entry script, and native bridge patch
+/// inside the app
 /// resources. Handles both the directory-preserving and directory-flattening
 /// ways Tauri can lay out a bundled `runtime` resource.
-fn resolve_runtime(resource_dir: &Path) -> Result<(PathBuf, PathBuf), String> {
+fn resolve_runtime(resource_dir: &Path) -> Result<(PathBuf, PathBuf, PathBuf), String> {
     let bases = [resource_dir.join("runtime"), resource_dir.to_path_buf()];
     for base in bases {
         let node = base.join("node");
@@ -279,12 +271,13 @@ fn resolve_runtime(resource_dir: &Path) -> Result<(PathBuf, PathBuf), String> {
             .join("dsh")
             .join("lib")
             .join("bin.js");
-        if node.exists() && bin.exists() {
-            return Ok((node, bin));
+        let patch = base.join("dsh").join("openharness.patch.yml");
+        if node.exists() && bin.exists() && patch.exists() {
+            return Ok((node, bin, patch));
         }
     }
     Err(format!(
-        "bundled runtime not found under {} (expected runtime/node and runtime/dsh/node_modules)",
+        "bundled runtime not found under {} (expected runtime/node, runtime/dsh/node_modules, and runtime/dsh/openharness.patch.yml)",
         resource_dir.display()
     ))
 }
@@ -442,19 +435,44 @@ fn load_shell_env() -> Result<Vec<(String, String)>, std::io::Error> {
     Ok(parse_shell_env(&output))
 }
 
+fn load_shell_env_or_empty() -> Vec<(String, String)> {
+    match load_shell_env() {
+        Ok(shell_env) => {
+            let has_path = shell_env.iter().any(|(key, _)| key == "PATH");
+            let deepseek_count = shell_env
+                .iter()
+                .filter(|(key, _)| key.starts_with("DEEPSEEK_"))
+                .count();
+            eprintln!(
+                "[harness] login shell environment loaded (PATH: {has_path}, DeepSeek variables: {deepseek_count})"
+            );
+            shell_env
+        }
+        Err(error) => {
+            eprintln!(
+                "[harness] login shell environment unavailable; using inherited environment: {error}"
+            );
+            Vec::new()
+        }
+    }
+}
+
 /// Spawn the DSH web server and block until it reports its canonical URL.
 fn spawn_harness(
     resource_dir: &Path,
     home: &Path,
     shell_env: &[(String, String)],
 ) -> Result<(Child, Url), Box<dyn std::error::Error>> {
-    let (node, bin) = resolve_runtime(resource_dir)
+    let (node, bin, patch) = resolve_runtime(resource_dir)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e))?;
 
     let mut command = Command::new(node);
     command
         .arg(bin)
-        .args(["web", "--port", "0"])
+        .args(["--profile", "web"])
+        .arg("--patch")
+        .arg(patch)
+        .args(["--port", "0"])
         .env("DSH_TELEMETRY_DISABLED", "1")
         .current_dir(home)
         .stdout(Stdio::piped())
@@ -535,7 +553,6 @@ fn backend_supervisor(
         if state.quitting.load(Ordering::SeqCst) {
             break;
         }
-
         match spawn_harness(&resource_dir, &home, &shell_env) {
             Ok((mut child, url)) => {
                 let started_at = Instant::now();
@@ -543,9 +560,9 @@ fn backend_supervisor(
                 *state.child_pid.lock().unwrap() = Some(pid);
                 state.set_url(url.clone());
 
-                // Point every existing window at the (new) backend. On the
-                // first spawn there are no windows yet, so this is a no-op.
-                for (_, window) in app.webview_windows() {
+                // Point the single business window at the validated backend.
+                // If startup wins the race, window creation reads current_url.
+                if let Some(window) = app.get_webview_window("main") {
                     let _ = window.navigate(url.clone());
                 }
 
@@ -555,6 +572,15 @@ fn backend_supervisor(
 
                 if state.quitting.load(Ordering::SeqCst) {
                     break;
+                }
+                if let Some(update_state) = app.try_state::<AppUpdateState>() {
+                    let ui = update_state.ui.clone();
+                    let update_enabled = !update_state.busy.load(Ordering::SeqCst);
+                    if let Err(error) = app.run_on_main_thread(move || {
+                        ui.set_session_snapshot(SessionMenuSnapshot::default(), update_enabled);
+                    }) {
+                        eprintln!("[harness] failed to reset Status Bar sessions: {error}");
+                    }
                 }
 
                 let uptime = started_at.elapsed();
@@ -630,16 +656,204 @@ fn update_menu_label(locale: NativeLocale, status: UpdateMenuStatus) -> String {
     }
 }
 
+fn clean_menu_text(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn truncate_menu_text(value: String) -> String {
+    if value.chars().count() <= SESSION_MENU_LABEL_LIMIT {
+        return value;
+    }
+    let mut truncated = value
+        .chars()
+        .take(SESSION_MENU_LABEL_LIMIT.saturating_sub(3))
+        .collect::<String>();
+    truncated.push_str("...");
+    truncated
+}
+
+fn session_menu_label(locale: NativeLocale, session: &SessionMenuEntry) -> String {
+    let title = clean_menu_text(&session.title);
+    let title = if title.is_empty() {
+        locale.text("未命名会话", "Untitled Session").to_string()
+    } else {
+        title
+    };
+    let workspace = session
+        .workspace
+        .as_deref()
+        .map(clean_menu_text)
+        .filter(|workspace| !workspace.is_empty() && workspace != &title);
+    let subject = match workspace {
+        Some(workspace) => format!("{title} - {workspace}"),
+        None => title,
+    };
+    let prefix = match session.pending_interaction.as_deref() {
+        Some("approval") => locale.text("[需批准] ", "[Approval Needed] "),
+        Some("question" | "plan-review") => locale.text("[待回答] ", "[Waiting for You] "),
+        _ if session.running => locale.text("[进行中] ", "[Running] "),
+        _ if session.completed => locale.text("[完成待查看] ", "[Ready to Review] "),
+        _ => "",
+    };
+    truncate_menu_text(format!("{prefix}{subject}"))
+}
+
+fn build_tray_menu(
+    app: &AppHandle,
+    locale: NativeLocale,
+    snapshot: &SessionMenuSnapshot,
+    update_status: UpdateMenuStatus,
+    update_enabled: bool,
+) -> tauri::Result<Menu<Wry>> {
+    let menu = Menu::new(app)?;
+    let (top, history) = select_sessions(&snapshot.sessions);
+
+    if !snapshot.ready {
+        menu.append(&MenuItem::with_id(
+            app,
+            "sessions-loading",
+            locale.text("正在连接 Harness...", "Connecting to Harness..."),
+            false,
+            None::<&str>,
+        )?)?;
+    } else if top.is_empty() {
+        menu.append(&MenuItem::with_id(
+            app,
+            "sessions-empty",
+            locale.text("暂无会话", "No Sessions"),
+            false,
+            None::<&str>,
+        )?)?;
+    } else {
+        for session in &top {
+            menu.append(&MenuItem::with_id(
+                app,
+                format!("{SESSION_MENU_ID_PREFIX}{}", session.id),
+                session_menu_label(locale, session),
+                true,
+                None::<&str>,
+            )?)?;
+        }
+    }
+
+    let more = Submenu::new(app, locale.text("更多会话", "More Sessions"), true)?;
+    if history.is_empty() {
+        more.append(&MenuItem::with_id(
+            app,
+            "history-empty",
+            locale.text("暂无更多会话", "No More Sessions"),
+            false,
+            None::<&str>,
+        )?)?;
+    } else {
+        for session in history {
+            more.append(&MenuItem::with_id(
+                app,
+                format!("{SESSION_MENU_ID_PREFIX}{}", session.id),
+                session_menu_label(locale, session),
+                true,
+                None::<&str>,
+            )?)?;
+        }
+    }
+    more.append(&PredefinedMenuItem::separator(app)?)?;
+    more.append(&MenuItem::with_id(
+        app,
+        "show-all",
+        locale.text("在 Harness 中查看全部...", "View All in Harness..."),
+        true,
+        None::<&str>,
+    )?)?;
+    menu.append(&more)?;
+
+    menu.append(&PredefinedMenuItem::separator(app)?)?;
+    menu.append(&MenuItem::with_id(
+        app,
+        "show",
+        locale.text("打开 Harness", "Open Harness"),
+        true,
+        None::<&str>,
+    )?)?;
+    menu.append(&MenuItem::with_id(
+        app,
+        "new-session",
+        locale.text("新建会话", "New Session"),
+        snapshot.ready,
+        None::<&str>,
+    )?)?;
+    menu.append(&PredefinedMenuItem::separator(app)?)?;
+    menu.append(&MenuItem::with_id(
+        app,
+        "update",
+        update_menu_label(locale, update_status),
+        update_enabled,
+        None::<&str>,
+    )?)?;
+    menu.append(&MenuItem::with_id(
+        app,
+        "quit",
+        locale.text("退出 OpenHarness", "Quit OpenHarness"),
+        true,
+        None::<&str>,
+    )?)?;
+    Ok(menu)
+}
+
+impl TrayMenuItems {
+    fn rebuild(
+        &self,
+        locale: NativeLocale,
+        update_status: UpdateMenuStatus,
+        update_enabled: bool,
+    ) -> tauri::Result<()> {
+        let snapshot = self.snapshot.lock().unwrap().clone();
+        let menu = build_tray_menu(
+            self.tray.app_handle(),
+            locale,
+            &snapshot,
+            update_status,
+            update_enabled,
+        )?;
+        self.tray.set_menu(Some(menu))
+    }
+
+    fn set_snapshot(
+        &self,
+        snapshot: SessionMenuSnapshot,
+        locale: NativeLocale,
+        update_status: UpdateMenuStatus,
+        update_enabled: bool,
+    ) -> tauri::Result<()> {
+        *self.snapshot.lock().unwrap() = snapshot;
+        self.rebuild(locale, update_status, update_enabled)
+    }
+}
+
 impl NativeUi {
     fn locale(&self) -> NativeLocale {
         *self.locale.lock().unwrap()
     }
 
     fn render_update_status(&self, enabled: bool) {
-        let label = update_menu_label(self.locale(), *self.update_status.lock().unwrap());
-        for item in [&self.app_menu.update, &self.tray_menu.update] {
-            let _ = item.set_text(&label);
-            let _ = item.set_enabled(enabled);
+        let locale = self.locale();
+        let status = *self.update_status.lock().unwrap();
+        let label = update_menu_label(locale, status);
+        let _ = self.app_menu.update.set_text(&label);
+        let _ = self.app_menu.update.set_enabled(enabled);
+        if let Err(error) = self.tray_menu.rebuild(locale, status, enabled) {
+            eprintln!("[harness] failed to rebuild Status Bar menu: {error}");
         }
     }
 
@@ -670,16 +884,18 @@ impl NativeUi {
             .app_menu
             .quit
             .set_text(locale.text("退出 OpenHarness", "Quit OpenHarness"));
-        let _ = self
-            .tray_menu
-            .show
-            .set_text(locale.text("显示主窗口", "Show Main Window"));
-        let _ = self
-            .tray_menu
-            .new
-            .set_text(locale.text("新建窗口", "New Window"));
-        let _ = self.tray_menu.quit.set_text(locale.text("退出", "Quit"));
         self.render_update_status(update_enabled);
+    }
+
+    fn set_session_snapshot(&self, snapshot: SessionMenuSnapshot, update_enabled: bool) {
+        let locale = self.locale();
+        let status = *self.update_status.lock().unwrap();
+        if let Err(error) = self
+            .tray_menu
+            .set_snapshot(snapshot, locale, status, update_enabled)
+        {
+            eprintln!("[harness] failed to update Status Bar sessions: {error}");
+        }
     }
 }
 
@@ -713,6 +929,28 @@ fn sync_dsh_preferences(app: AppHandle, theme: String, locale: String) -> Result
     if should_check_for_updates {
         request_update_check(app, UpdateCheckSource::Automatic);
     }
+    Ok(())
+}
+
+#[tauri::command]
+fn sync_dsh_sessions(
+    window: tauri::WebviewWindow,
+    app: AppHandle,
+    snapshot: SessionMenuSnapshot,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("session snapshots are accepted only from the main window".to_string());
+    }
+    if snapshot.revision == 0 {
+        return Err("invalid DSH session snapshot revision".to_string());
+    }
+    validate_snapshot(&snapshot)?;
+    let state = app
+        .try_state::<AppUpdateState>()
+        .ok_or_else(|| "native UI state is not ready".to_string())?;
+    state
+        .ui
+        .set_session_snapshot(snapshot, !state.busy.load(Ordering::SeqCst));
     Ok(())
 }
 
@@ -1081,17 +1319,7 @@ fn request_update_check(app: AppHandle, source: UpdateCheckSource) {
     });
 }
 
-/// Pick the label for the next window; "main" first, then "session-N".
-fn next_window_label(state: &Arc<BackendState>) -> String {
-    let n = state.window_seq.fetch_add(1, Ordering::SeqCst);
-    if n == 0 {
-        "main".to_string()
-    } else {
-        format!("session-{n}")
-    }
-}
-
-/// Resolve the URL a new window should load (the live backend, or the bundled
+/// Resolve the URL the main window should load (the live backend, or the bundled
 /// "starting" stub while the backend is not ready).
 fn window_url(state: &Arc<BackendState>) -> WebviewUrl {
     match state.current_url() {
@@ -1100,14 +1328,17 @@ fn window_url(state: &Arc<BackendState>) -> WebviewUrl {
     }
 }
 
-/// Create a new native window hosting the harness browser UI.
+/// Create the single native window hosting the harness browser UI.
 ///
-/// Theme is left at its default (`None`) so each window follows the system
+/// Theme is left at its default (`None`) so the window follows the system
 /// dark/light appearance.
-fn create_window(app: &tauri::AppHandle, state: &Arc<BackendState>) -> tauri::Result<()> {
-    let label = next_window_label(state);
+fn create_main_window(app: &tauri::AppHandle, state: &Arc<BackendState>) -> tauri::Result<()> {
+    if app.get_webview_window("main").is_some() {
+        show_main_window(app);
+        return Ok(());
+    }
     let url = window_url(state);
-    WebviewWindowBuilder::new(app, label, url)
+    WebviewWindowBuilder::new(app, "main", url)
         .title("OpenHarness")
         .inner_size(1280.0, 800.0)
         .min_inner_size(900.0, 600.0)
@@ -1124,6 +1355,24 @@ fn show_main_window(app: &tauri::AppHandle) {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+    }
+}
+
+fn dispatch_harness_action(app: &AppHandle, action: &str, session_id: Option<&str>) {
+    show_main_window(app);
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let detail = match session_id {
+        Some(session_id) => serde_json::json!({ "type": action, "sessionId": session_id }),
+        None => serde_json::json!({ "type": action }),
+    };
+    let script = format!(
+        "window.dispatchEvent(new CustomEvent(\"openharness:native-action\", {{ detail: {} }}));",
+        detail
+    );
+    if let Err(error) = window.eval(script) {
+        eprintln!("[harness] failed to dispatch native action: {error}");
     }
 }
 
@@ -1192,62 +1441,35 @@ fn build_app_menu(
 
 /// Build the menu-bar (tray) icon and its menu.
 fn build_tray(app: &tauri::AppHandle, locale: NativeLocale) -> tauri::Result<TrayMenuItems> {
-    let show = MenuItem::with_id(
+    let snapshot = Arc::new(Mutex::new(SessionMenuSnapshot::default()));
+    let menu = build_tray_menu(
         app,
-        "show",
-        locale.text("显示主窗口", "Show Main Window"),
+        locale,
+        &snapshot.lock().unwrap(),
+        UpdateMenuStatus::Idle,
         true,
-        None::<&str>,
     )?;
-    let new = MenuItem::with_id(
-        app,
-        "new",
-        locale.text("新建窗口", "New Window"),
-        true,
-        None::<&str>,
-    )?;
-    let update = MenuItem::with_id(
-        app,
-        "update",
-        update_menu_label(locale, UpdateMenuStatus::Idle),
-        true,
-        None::<&str>,
-    )?;
-    let quit = MenuItem::with_id(app, "quit", locale.text("退出", "Quit"), true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &new, &update, &quit])?;
-
-    let tray_app = app.clone();
-    TrayIconBuilder::new()
+    let tray = TrayIconBuilder::new()
         .icon(app.default_window_icon().cloned().expect("app icon"))
         .tooltip("OpenHarness")
         .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => show_main_window(app),
-            "new" => {
-                let state = app.state::<Arc<BackendState>>();
-                let _ = create_window(app, state.inner());
+        .show_menu_on_left_click(true)
+        .on_menu_event(|app, event| {
+            let id = event.id.as_ref();
+            if let Some(session_id) = id.strip_prefix(SESSION_MENU_ID_PREFIX) {
+                dispatch_harness_action(app, "open-session", Some(session_id));
+                return;
             }
-            "update" => request_update_check(app.clone(), UpdateCheckSource::Manual),
-            "quit" => app.exit(0),
-            _ => {}
-        })
-        .on_tray_icon_event(move |_tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                ..
-            } = event
-            {
-                show_main_window(&tray_app);
+            match id {
+                "show" | "show-all" => show_main_window(app),
+                "new-session" => dispatch_harness_action(app, "new-session", None),
+                "update" => request_update_check(app.clone(), UpdateCheckSource::Manual),
+                "quit" => app.exit(0),
+                _ => {}
             }
         })
         .build(app)?;
-    Ok(TrayMenuItems {
-        show,
-        new,
-        update,
-        quit,
-    })
+    Ok(TrayMenuItems { tray, snapshot })
 }
 
 fn main() {
@@ -1263,7 +1485,10 @@ fn main() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![sync_dsh_preferences])
+        .invoke_handler(tauri::generate_handler![
+            sync_dsh_preferences,
+            sync_dsh_sessions
+        ])
         .menu(move |app| {
             let (menu, items) = build_app_menu(app, initial_locale)?;
             *menu_slot.lock().unwrap() = Some(items);
@@ -1301,42 +1526,24 @@ fn main() {
                 ui,
             });
 
-            // Finder launches lack the login PATH and shell-configured API
-            // credentials. Failure here is non-fatal: inherited values remain.
-            let shell_env = match load_shell_env() {
-                Ok(shell_env) => {
-                    let has_path = shell_env.iter().any(|(key, _)| key == "PATH");
-                    let deepseek_count = shell_env
-                        .iter()
-                        .filter(|(key, _)| key.starts_with("DEEPSEEK_"))
-                        .count();
-                    eprintln!(
-                        "[harness] login shell environment loaded (PATH: {has_path}, DeepSeek variables: {deepseek_count})"
-                    );
-                    shell_env
-                }
-                Err(error) => {
-                    eprintln!(
-                        "[harness] login shell environment unavailable; using inherited environment: {error}"
-                    );
-                    Vec::new()
-                }
-            };
-
-            // Supervise the backend in a background thread.
-            let supervisor = std::thread::spawn({
+            // Supervise the backend in a detached background thread. The
+            // shared quit flag and child PID own its process lifecycle.
+            std::thread::spawn({
                 let state = state.clone();
                 let app = app.handle().clone();
                 let resource_dir = resource_dir.clone();
                 let home = home.clone();
-                move || backend_supervisor(state, resource_dir, home, shell_env, app)
+                move || {
+                    // Finder launches lack the login PATH and shell-configured
+                    // API credentials. Keep this bounded work off the UI thread.
+                    let shell_env = load_shell_env_or_empty();
+                    backend_supervisor(state, resource_dir, home, shell_env, app);
+                }
             });
-            // Keep the handle so the thread is not detached silently.
-            let _ = supervisor;
 
-            // Wait for the backend's first URL before opening the window.
-            state.wait_url(STARTUP_TIMEOUT);
-            let _ = create_window(app.handle(), &state);
+            // Keep the native UI responsive while DSH starts. The supervisor
+            // navigates this window after it validates the loopback URL.
+            create_main_window(app.handle(), &state)?;
 
             Ok(())
         })
@@ -1373,6 +1580,109 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn menu_session(
+        id: &str,
+        updated_at: u64,
+        pending_interaction: Option<&str>,
+        running: bool,
+        completed: bool,
+    ) -> SessionMenuEntry {
+        SessionMenuEntry {
+            id: id.to_string(),
+            title: id.to_string(),
+            workspace: None,
+            updated_at,
+            running,
+            completed,
+            pending_interaction: pending_interaction.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn status_bar_orders_the_five_task_categories() {
+        let sessions = vec![
+            menu_session("idle", 500, None, false, false),
+            menu_session("completed", 400, None, false, true),
+            menu_session("running", 300, None, true, false),
+            menu_session("question", 200, Some("question"), false, false),
+            menu_session("plan-review", 250, Some("plan-review"), false, false),
+            menu_session("approval", 100, Some("approval"), false, false),
+        ];
+
+        let (top, _) = select_sessions(&sessions);
+        let ids = top
+            .iter()
+            .map(|session| session.id.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            ids,
+            [
+                "approval",
+                "plan-review",
+                "question",
+                "running",
+                "completed"
+            ]
+        );
+    }
+
+    #[test]
+    fn status_bar_limits_top_and_history_lists() {
+        let sessions = (0..30)
+            .map(|index| menu_session(&format!("session-{index}"), index, None, false, false))
+            .collect::<Vec<_>>();
+
+        let (top, history) = select_sessions(&sessions);
+
+        assert_eq!(top.len(), TOP_SESSION_LIMIT);
+        assert_eq!(history.len(), HISTORY_SESSION_LIMIT);
+        assert_eq!(top[0].id, "session-29");
+        assert_eq!(top[4].id, "session-25");
+        assert_eq!(history[0].id, "session-24");
+        assert_eq!(history[19].id, "session-5");
+    }
+
+    #[test]
+    fn idle_session_label_has_no_false_completion_state() {
+        let idle = menu_session("Resumable", 1, None, false, false);
+        let completed = menu_session("Finished", 2, None, false, true);
+
+        assert_eq!(session_menu_label(NativeLocale::Zh, &idle), "Resumable");
+        assert!(session_menu_label(NativeLocale::Zh, &completed).starts_with("[完成待查看] "));
+    }
+
+    #[test]
+    fn session_menu_label_normalizes_controls_and_caps_length() {
+        let mut session = menu_session("session", 1, None, false, false);
+        session.title = format!("Long\0\n  title {}", "x".repeat(120));
+
+        let label = session_menu_label(NativeLocale::En, &session);
+
+        assert!(label.starts_with("Long title "));
+        assert!(label.ends_with("..."));
+        assert!(label.chars().count() <= SESSION_MENU_LABEL_LIMIT);
+        assert!(!label.chars().any(char::is_control));
+    }
+
+    #[test]
+    fn session_snapshot_rejects_duplicate_or_unknown_state() {
+        let duplicate = menu_session("same", 1, None, false, false);
+        let snapshot = SessionMenuSnapshot {
+            revision: 1,
+            ready: true,
+            sessions: vec![duplicate.clone(), duplicate],
+        };
+        assert!(validate_snapshot(&snapshot).is_err());
+
+        let snapshot = SessionMenuSnapshot {
+            revision: 1,
+            ready: true,
+            sessions: vec![menu_session("bad", 1, Some("unknown"), false, false)],
+        };
+        assert!(validate_snapshot(&snapshot).is_err());
+    }
 
     #[test]
     fn shell_env_parser_imports_only_path_and_deepseek_variables() {

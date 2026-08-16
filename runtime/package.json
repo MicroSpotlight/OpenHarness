@@ -6,6 +6,7 @@
     "node-pty"
   ],
   "dependencies": {
-    "@deepseek-ai/dsh": "0.1.0-rc.6"
+    "@deepseek-ai/dsh": "0.1.0-rc.6",
+    "@openharness/native-bridge": "file:./native-bridge"
   }
 }

@@ -51,6 +51,8 @@ BIN_JS="${DSH_DIR}/node_modules/@deepseek-ai/dsh/lib/bin.js"
 RUNTIME_MANIFEST_DIR="runtime"
 RUNTIME_PACKAGE_JSON="${RUNTIME_MANIFEST_DIR}/package.json"
 RUNTIME_LOCKFILE="${RUNTIME_MANIFEST_DIR}/bun.lock"
+RUNTIME_NATIVE_BRIDGE="${RUNTIME_MANIFEST_DIR}/native-bridge"
+RUNTIME_PATCH="${RUNTIME_MANIFEST_DIR}/openharness.patch.yml"
 RUNTIME_STAMP="${DSH_DIR}/.openharness-runtime.sha256"
 NODE_STAMP="${RUNTIME_DIR}/.openharness-node-version"
 
@@ -86,7 +88,7 @@ fi
 # 2) @deepseek-ai/dsh 依赖树
 DSH_VERSION="$(jq -er '.dependencies["@deepseek-ai/dsh"] | strings | select(length > 0)' "${RUNTIME_PACKAGE_JSON}")"
 BUN_VERSION="$(bun --version)"
-RUNTIME_MANIFEST_HASH="$( { printf '%s\n' "${NODE_VERSION}" "${RUNTIME_CPU}" "${BUN_VERSION}"; shasum -a 256 "${RUNTIME_PACKAGE_JSON}" "${RUNTIME_LOCKFILE}"; } | shasum -a 256 | awk '{print $1}')"
+RUNTIME_MANIFEST_HASH="$( { printf '%s\n' "${NODE_VERSION}" "${RUNTIME_CPU}" "${BUN_VERSION}"; find "${RUNTIME_NATIVE_BRIDGE}" -type f -print0 | sort -z | xargs -0 shasum -a 256; shasum -a 256 "${RUNTIME_PACKAGE_JSON}" "${RUNTIME_LOCKFILE}" "${RUNTIME_PATCH}"; } | shasum -a 256 | awk '{print $1}')"
 INSTALLED_MANIFEST_HASH="$(cat "${RUNTIME_STAMP}" 2>/dev/null || true)"
 INSTALLED_DSH_PACKAGE="${DSH_DIR}/node_modules/@deepseek-ai/dsh/package.json"
 INSTALLED_DSH_VERSION="$(jq -r '.version // empty' "${INSTALLED_DSH_PACKAGE}" 2>/dev/null || true)"
@@ -96,6 +98,8 @@ if [[ ! -f "${BIN_JS}" || "${INSTALLED_MANIFEST_HASH}" != "${RUNTIME_MANIFEST_HA
   mkdir -p "${DSH_DIR}"
   cp "${RUNTIME_PACKAGE_JSON}" "${DSH_DIR}/package.json"
   cp "${RUNTIME_LOCKFILE}" "${DSH_DIR}/bun.lock"
+  cp -R "${RUNTIME_NATIVE_BRIDGE}" "${DSH_DIR}/native-bridge"
+  cp "${RUNTIME_PATCH}" "${DSH_DIR}/openharness.patch.yml"
   echo ">> bun install @deepseek-ai/dsh@${DSH_VERSION} for darwin-${RUNTIME_CPU}"
   (
     cd "${DSH_DIR}"
