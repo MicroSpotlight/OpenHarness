@@ -18,6 +18,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "macos")]
+use std::ffi::{c_char, CStr};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
@@ -55,6 +57,7 @@ const WEBVIEW_INIT_SCRIPT: &str = include_str!("../webview-init.js");
 
 #[cfg(target_os = "macos")]
 extern "C" {
+    fn openharness_current_build_number() -> *const c_char;
     fn openharness_install_webview_context_menu_filter();
     fn openharness_preferred_native_locale() -> i32;
 }
@@ -1029,16 +1032,35 @@ fn compare_build_numbers(left: &str, right: &str) -> Result<CompareOrdering, Str
     Ok(CompareOrdering::Equal)
 }
 
-fn configured_build_number(value: Option<&str>) -> Result<String, String> {
+fn validated_build_number(value: Option<&str>) -> Result<String, String> {
     let value = value
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| "application configuration is missing bundleVersion".to_string())?;
+        .ok_or_else(|| "application bundle is missing a build number".to_string())?;
     let parts = parse_build_number(value)?;
     if parts.iter().all(|part| *part == 0) {
-        return Err("application bundleVersion must be positive".to_string());
+        return Err("application build number must be positive".to_string());
     }
     Ok(value.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn installed_build_number(_app: &AppHandle) -> Result<String, String> {
+    // CLI config overrides are not retained reliably in Tauri's runtime config;
+    // the signed app bundle is the authoritative source for CFBundleVersion.
+    let value = unsafe { openharness_current_build_number() };
+    if value.is_null() {
+        return Err("application bundle is missing CFBundleVersion".to_string());
+    }
+    let value = unsafe { CStr::from_ptr(value) }
+        .to_str()
+        .map_err(|error| format!("application CFBundleVersion is not valid UTF-8: {error}"))?;
+    validated_build_number(Some(value))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn installed_build_number(app: &AppHandle) -> Result<String, String> {
+    validated_build_number(app.config().bundle.macos.bundle_version.as_deref())
 }
 
 fn compare_core_versions(left: &Version, right: &Version) -> CompareOrdering {
@@ -1126,9 +1148,7 @@ fn request_update_check(app: AppHandle, source: UpdateCheckSource) {
 
     tauri::async_runtime::spawn(async move {
         let current_version = app.package_info().version.clone();
-        let current_build_number = match configured_build_number(
-            app.config().bundle.macos.bundle_version.as_deref(),
-        ) {
+        let current_build_number = match installed_build_number(&app) {
             Ok(build_number) => build_number,
             Err(error) => {
                 eprintln!("[updater] {error}");
@@ -1881,10 +1901,12 @@ INVALID-KEY=value\0";
     }
 
     #[test]
-    fn requires_a_positive_configured_build_number() {
-        assert_eq!(configured_build_number(Some("7")).unwrap(), "7");
-        assert!(configured_build_number(None).is_err());
-        assert!(configured_build_number(Some("0")).is_err());
-        assert!(configured_build_number(Some("01")).is_err());
+    fn requires_a_positive_bundle_build_number() {
+        assert_eq!(validated_build_number(Some("7")).unwrap(), "7");
+        assert_eq!(validated_build_number(Some(" 7 ")).unwrap(), "7");
+        assert!(validated_build_number(None).is_err());
+        assert!(validated_build_number(Some("0")).is_err());
+        assert!(validated_build_number(Some("01")).is_err());
+        assert!(validated_build_number(Some("1.2.3.4")).is_err());
     }
 }

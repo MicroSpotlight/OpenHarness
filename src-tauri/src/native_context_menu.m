@@ -8,6 +8,19 @@ typedef void (*OpenHarnessPopupContextMenuImplementation)(
 
 static OpenHarnessPopupContextMenuImplementation originalPopupContextMenu;
 
+const char *openharness_current_build_number(void) {
+  static NSString *buildNumber;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    id value = [NSBundle.mainBundle
+        objectForInfoDictionaryKey:@"CFBundleVersion"];
+    if ([value isKindOfClass:NSString.class]) {
+      buildNumber = [value copy];
+    }
+  });
+  return buildNumber.UTF8String;
+}
+
 int32_t openharness_preferred_native_locale(void) {
   for (NSString *tag in NSLocale.preferredLanguages) {
     NSString *language =
