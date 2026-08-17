@@ -2,11 +2,13 @@
   "name": "openharness",
   "version": "0.1.0",
   "private": true,
-  "description": "Native macOS desktop app for an open-source AI agent harness",
+  "description": "Native desktop app for an open-source AI agent harness",
   "keywords": [
     "ai-agent",
     "desktop-app",
     "macos",
+    "windows",
+    "linux",
     "tauri"
   ],
   "author": {
@@ -25,9 +27,12 @@
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev",
+    "postinstall": "bun scripts/setup-runtime.mjs",
+    "setup:runtime": "bun scripts/setup-runtime.mjs",
     "build": "node scripts/build-tauri.mjs",
     "test:build-number": "node --test scripts/build-tauri.test.mjs",
-    "test:update-manifest": "node --test scripts/update-manifest.test.mjs"
+    "test:update-manifest": "node --test scripts/update-manifest.test.mjs",
+    "test:setup-runtime": "node --test scripts/setup-runtime.test.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0"

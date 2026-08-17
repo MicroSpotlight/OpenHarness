@@ -9,12 +9,28 @@ const copy = {
     navCapabilities: "能力",
     navHow: "运行方式",
     navFaq: "常见问题",
-    heroEyebrow: "原生 macOS AI Agent 应用",
+    heroEyebrow: "跨平台原生 AI Agent 桌面应用",
     heroTitleTop: "OpenHarness",
-    heroTitleBottom: "让 Harness 原生运行。",
+    heroTitleBottom: "让 Harness 跨平台原生运行。",
     heroLede: "无需单独安装 Node.js 或输入启动命令。打开原生窗口，直接进入完整、可组合、可追溯的 Agent 工作空间。",
-    downloadAppleSilicon: "下载 Apple Silicon",
-    downloadIntel: "下载 Intel",
+    heroDownloadCta: "前往下载",
+    downloadKicker: "下载",
+    downloadTitle: "选择适合这台设备的安装包。",
+    downloadBody: "安装包已包含运行环境，无需另外安装 Node.js。页面会优先标出当前设备对应的版本。",
+    downloadGroupLabel: "按平台选择安装包",
+    windowsSupport: "Windows 10 / 11 · x64 / ARM64",
+    linuxSupport: "Ubuntu 22.04+ / Debian 12+ · x64 / ARM64",
+    macSupport: "macOS 15+ · Apple Silicon / Intel",
+    packageLabel: "安装程序",
+    portablePackageLabel: "便携应用",
+    diskImageLabel: "磁盘映像",
+    linuxDebDownload: "需要 .deb 或 .rpm？查看全部发布文件",
+    downloadAppleSilicon: "Apple Silicon",
+    downloadIntel: "Intel",
+    downloadWindows: "x64",
+    downloadWindowsArm: "ARM64",
+    downloadLinux: "x64",
+    downloadLinuxArm: "ARM64",
     productStageLabel: "OpenHarness 应用界面",
     sessionScreenshotAlt: "OpenHarness 中运行 Agent 任务的会话界面",
     heroCaption: "OpenHarness 原生窗口中的 DeepSeek Harness Web UI",
@@ -29,12 +45,12 @@ const copy = {
     factHarnessValue: "插件能力保持不变",
     experienceKicker: "完整 Harness 体验",
     experienceTitle: "桌面宿主，不是另一套生态。",
-    experienceBody: "OpenHarness 将 DeepSeek Harness（DSH）完整装进原生 macOS 应用。模型、工具、技能、会话与插件保持一致，只是使用入口从命令行变成桌面窗口。",
+    experienceBody: "OpenHarness 将 DeepSeek Harness（DSH）完整装进跨平台桌面应用。模型、工具、技能、会话与插件保持一致，只是使用入口从命令行变成桌面窗口。",
     learnHarness: "DeepSeek Harness 官方网站",
     experienceOneTitle: "开箱即用",
     experienceOneBody: "DeepSeek Harness 与运行环境随 App 提供，无需另外安装 Node.js 或输入启动命令。",
     experienceTwoTitle: "原生桌面体验",
-    experienceTwoBody: "从 Dock 打开窗口，关闭后继续驻留菜单栏，需要时随时回到工作区。",
+    experienceTwoBody: "从桌面打开窗口，关闭后继续驻留系统托盘，需要时随时回到工作区。",
     experienceThreeTitle: "延续已有工作区",
     experienceThreeBody: "如果已经使用 DSH，现有模型配置、会话和插件可以继续使用，无需重新开始。",
     capabilitiesKicker: "完整的 Harness 能力",
@@ -56,7 +72,7 @@ const copy = {
     howTitle: "打开 App，直接开始使用。",
     howBody: "OpenHarness 已经把 DeepSeek Harness（DSH）的 Web UI 和运行环境装进 App，你只需要完成模型与工作区设置。",
     flowOneTitle: "下载并打开",
-    flowOneBody: "选择适合 Mac 芯片的安装包，完成安装后直接打开 OpenHarness。",
+    flowOneBody: "选择当前系统和架构对应的安装包，完成安装后直接打开 OpenHarness。",
     flowTwoTitle: "配置模型",
     flowTwoBody: "在“设置 → 模型”中填写 DeepSeek API Key，也可以继续使用已有的模型配置。",
     flowThreeTitle: "选择工作区",
@@ -75,11 +91,12 @@ const copy = {
     faqThreeQuestion: "会覆盖现有的命令行配置吗？",
     faqThreeAnswer: "不会创建另一套配置目录。OpenHarness 复用 ~/.dsh，因此已有模型凭据、会话与插件可继续使用。",
     faqFourQuestion: "目前支持哪些平台？",
-    faqFourAnswer: "OpenHarness 支持 macOS 15.0 或更高版本，分别提供 Apple Silicon arm64 与 Intel x64 原生构建。",
+    faqFourAnswer: "OpenHarness 支持 macOS 15.0+、Windows 10+ x64/ARM64，以及 Ubuntu 22.04+、Debian 12+ 等 x64/ARM64 Linux 发行版；Linux 需要 glibc 2.35+ 和 WebKitGTK 4.1。",
     faqFiveQuestion: "如何选择下载架构？",
-    faqFiveAnswer: "Apple M 系列芯片选择 arm64；Intel 处理器选择 x64。发布页会分别提供两个安装包。",
-    ctaKicker: "OpenHarness",
+    faqFiveAnswer: "按设备架构选择 x64 或 ARM64：macOS 使用 DMG，Windows 使用 EXE，Linux 可选择 AppImage、Debian 或 RPM 包。",
+    ctaKicker: "准备开始",
     ctaTitle: "让下一次 Harness 运行，从桌面开始。",
+    ctaDownloadCta: "选择安装包",
     deepSeekHarnessWebsite: "DeepSeek Harness 官方网站",
     license: "许可证",
     footerNote: "OpenHarness 由 MicroSpotlight 独立开发。为避免与 DeepSeek 品牌混淆，项目使用独立的产品名称、图标、Bundle ID 和视觉主题，不暗示获得 DeepSeek 认可或与 DeepSeek 存在隶属关系。",
@@ -94,12 +111,28 @@ const copy = {
     navCapabilities: "Capabilities",
     navHow: "How it works",
     navFaq: "FAQ",
-    heroEyebrow: "Native macOS AI agent app",
+    heroEyebrow: "Native cross-platform AI agent desktop app",
     heroTitleTop: "OpenHarness",
-    heroTitleBottom: "Harness, native on macOS.",
+    heroTitleBottom: "Harness, native on your desktop.",
     heroLede: "Skip the separate Node.js setup and launch commands. Open a native window and step into a complete, composable, traceable agent workspace.",
-    downloadAppleSilicon: "Download for Apple Silicon",
-    downloadIntel: "Download for Intel",
+    heroDownloadCta: "Go to downloads",
+    downloadKicker: "Download",
+    downloadTitle: "Choose the right build for this device.",
+    downloadBody: "Every installer includes the runtime, so Node.js is not required. The best match for this device is highlighted automatically.",
+    downloadGroupLabel: "Choose an installer by platform",
+    windowsSupport: "Windows 10 / 11 · x64 / ARM64",
+    linuxSupport: "Ubuntu 22.04+ / Debian 12+ · x64 / ARM64",
+    macSupport: "macOS 15+ · Apple Silicon / Intel",
+    packageLabel: "Installer",
+    portablePackageLabel: "Portable app",
+    diskImageLabel: "Disk image",
+    linuxDebDownload: "Need a .deb or .rpm? View all release files",
+    downloadAppleSilicon: "Apple Silicon",
+    downloadIntel: "Intel",
+    downloadWindows: "x64",
+    downloadWindowsArm: "ARM64",
+    downloadLinux: "x64",
+    downloadLinuxArm: "ARM64",
     productStageLabel: "OpenHarness application window",
     sessionScreenshotAlt: "An Agent task session running in OpenHarness",
     heroCaption: "The DeepSeek Harness Web UI inside a native OpenHarness window",
@@ -114,12 +147,12 @@ const copy = {
     factHarnessValue: "Every plugin capability intact",
     experienceKicker: "The complete Harness experience",
     experienceTitle: "A desktop host, not another ecosystem.",
-    experienceBody: "OpenHarness packages the complete DeepSeek Harness (DSH) experience as a native macOS app. Models, tools, skills, sessions, and plugins stay the same; the entry point moves from the command line to a desktop window.",
+    experienceBody: "OpenHarness packages the complete DeepSeek Harness (DSH) experience as a native desktop app for macOS, Windows, and Linux. Models, tools, skills, sessions, and plugins stay the same; the entry point moves from the command line to a desktop window.",
     learnHarness: "DeepSeek Harness official website",
     experienceOneTitle: "Ready out of the box",
     experienceOneBody: "DeepSeek Harness and its runtime ship with the app, with no separate Node.js installation or launch commands.",
     experienceTwoTitle: "Native desktop experience",
-    experienceTwoBody: "Open it from the Dock, close it to the menu bar, and return to your workspace whenever you need it.",
+    experienceTwoBody: "Open it from the desktop, close it to the system tray, and return to your workspace whenever you need it.",
     experienceThreeTitle: "Your workspace continues",
     experienceThreeBody: "If you already use DSH, your model settings, sessions, and plugins remain available without starting over.",
     capabilitiesKicker: "Complete Harness capabilities",
@@ -141,7 +174,7 @@ const copy = {
     howTitle: "Open the app and start working.",
     howBody: "OpenHarness packages the DeepSeek Harness (DSH) Web UI and runtime in the app, leaving only model and workspace setup.",
     flowOneTitle: "Download and open",
-    flowOneBody: "Choose the installer for your Mac, finish installation, and open OpenHarness.",
+    flowOneBody: "Choose the package for your operating system and architecture, finish installation, and open OpenHarness.",
     flowTwoTitle: "Configure a model",
     flowTwoBody: "Enter your DeepSeek API key under Settings → Models, or continue with an existing model configuration.",
     flowThreeTitle: "Choose a workspace",
@@ -160,11 +193,12 @@ const copy = {
     faqThreeQuestion: "Will it overwrite my CLI configuration?",
     faqThreeAnswer: "It does not create a second configuration directory. OpenHarness reuses ~/.dsh, so your existing credentials, sessions, and plugins remain available.",
     faqFourQuestion: "Which platforms are supported?",
-    faqFourAnswer: "OpenHarness supports macOS 15.0 or later, with separate native builds for Apple Silicon arm64 and Intel x64.",
+    faqFourAnswer: "OpenHarness supports macOS 15.0+, Windows 10+ on x64/ARM64, and x64/ARM64 Linux distributions such as Ubuntu 22.04+ and Debian 12+; Linux requires glibc 2.35+ and WebKitGTK 4.1.",
     faqFiveQuestion: "Which download architecture should I choose?",
-    faqFiveAnswer: "Choose arm64 for an Apple M-series chip or x64 for an Intel processor. The Releases page provides both installers.",
-    ctaKicker: "OpenHarness",
+    faqFiveAnswer: "Choose x64 or ARM64 for your device: DMG on macOS, EXE on Windows, or AppImage, Debian, and RPM packages on Linux.",
+    ctaKicker: "Ready when you are",
     ctaTitle: "Start your next Harness run from the desktop.",
+    ctaDownloadCta: "Choose a download",
     deepSeekHarnessWebsite: "DeepSeek Harness official website",
     license: "License",
     footerNote: "OpenHarness is independently developed by MicroSpotlight. It uses its own product name, icon, Bundle ID, and visual theme to avoid confusion with the DeepSeek brand and does not imply endorsement or affiliation.",
@@ -182,12 +216,57 @@ function formatFileSize(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function downloadPlatformFor(platform, architecture) {
+  platform = `${platform}`.toLowerCase();
+  architecture = `${architecture}`.toLowerCase();
+  const isArm = /\b(?:arm|arm64|aarch64)\b/.test(architecture);
+  const isX64 = /\b(?:amd64|x64|x86|x86_64)\b/.test(architecture);
+  if (platform.includes("win")) return isArm ? "windows-aarch64" : "windows-x86_64";
+  if (platform.includes("linux") && !platform.includes("android")) {
+    return isArm ? "linux-aarch64" : "linux-x86_64";
+  }
+  if (platform.includes("mac")) return isArm || !isX64 ? "darwin-aarch64" : "darwin-x86_64";
+  return null;
+}
+
+async function preferredDownloadPlatform() {
+  const platform = `${navigator.userAgentData?.platform ?? navigator.platform ?? ""} ${navigator.userAgent}`.toLowerCase();
+  let architecture = `${navigator.userAgentData?.architecture ?? ""} ${platform}`.toLowerCase();
+  if (navigator.userAgentData?.getHighEntropyValues) {
+    try {
+      const hints = await navigator.userAgentData.getHighEntropyValues(["architecture", "bitness"]);
+      architecture = `${hints.architecture ?? ""} ${hints.bitness ?? ""} ${architecture}`.toLowerCase();
+    } catch {
+      // Fall back to the low-entropy platform and user-agent values.
+    }
+  }
+  return downloadPlatformFor(platform, architecture);
+}
+
+async function prioritizeDownloadGroups() {
+  const preferredPlatform = await preferredDownloadPlatform();
+  document.querySelectorAll("[data-download-group]").forEach((group) => {
+    const links = [...group.querySelectorAll("[data-download-platform]")];
+    const preferred = links.find((link) => link.dataset.downloadPlatform === preferredPlatform);
+    const secondaryClass = group.dataset.secondaryClass;
+    links.forEach((link) => {
+      link.classList.remove("button-primary", "button-secondary", "button-ghost-light");
+      link.classList.add(link === preferred ? "button-primary" : secondaryClass);
+    });
+    if (preferred) group.prepend(preferred);
+  });
+}
+
 function renderLatestRelease() {
   const releaseVersion = latestRelease?.version;
   const downloads = latestRelease?.downloads ?? latestRelease?.platforms ?? {};
   const platformLabels = {
-    "darwin-aarch64": "Apple Silicon",
-    "darwin-x86_64": "Intel",
+    "darwin-aarch64": "macOS arm64",
+    "darwin-x86_64": "macOS x64",
+    "windows-aarch64": "Windows ARM64",
+    "windows-x86_64": "Windows x64",
+    "linux-aarch64": "Linux ARM64",
+    "linux-x86_64": "Linux x64",
   };
 
   document.querySelectorAll("[data-download-platform]").forEach((link) => {
@@ -199,20 +278,12 @@ function renderLatestRelease() {
     link.title = `${platformLabels[platform]} · ${installer.name} · ${formatFileSize(installer.size)}`;
   });
 
-  const summary = document.querySelector("[data-release-summary]");
-  if (!summary) return;
-
-  const architectureSummary = Object.entries(downloads)
-    .map(([platform, value]) => {
-      if (!value?.size || !platformLabels[platform]) return null;
-      return `${platformLabels[platform]} ${formatFileSize(value.size)}`;
-    })
-    .filter(Boolean)
-    .join(" · ");
   const versionSummary = releaseVersion
     ? `${releaseVersion.startsWith("v") ? releaseVersion : `v${releaseVersion}`} · `
     : "";
-  summary.textContent = `${versionSummary}macOS 15.0+${architectureSummary ? ` · ${architectureSummary}` : ""}`;
+  document.querySelectorAll("[data-release-summary]").forEach((summary) => {
+    summary.textContent = `${versionSummary}macOS 15+ · Windows 10+ · Linux x64/ARM64`;
+  });
 }
 
 async function loadLatestRelease() {
@@ -292,6 +363,7 @@ window.addEventListener(
 );
 
 document.querySelector("[data-year]").textContent = new Date().getFullYear();
+prioritizeDownloadGroups();
 translate(activeLanguage);
 loadLatestRelease();
 

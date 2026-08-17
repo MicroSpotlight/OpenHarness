@@ -10,6 +10,30 @@ import {
 
 const signature = Buffer.from("untrusted comment: test signature\nAAAA\n").toString("base64");
 const checksum = "a".repeat(64);
+const signatures = {
+  aarch64: signature,
+  x86_64: signature,
+  windows_x86_64: signature,
+  windows_aarch64: signature,
+  linux_x86_64: signature,
+  linux_aarch64: signature,
+};
+const checksums = {
+  aarch64: checksum,
+  x86_64: checksum,
+  windows_x86_64: checksum,
+  windows_aarch64: checksum,
+  linux_x86_64: checksum,
+  linux_aarch64: checksum,
+};
+const sizes = {
+  aarch64: 120_000_000,
+  x86_64: 125_000_000,
+  windows_x86_64: 110_000_000,
+  windows_aarch64: 105_000_000,
+  linux_x86_64: 130_000_000,
+  linux_aarch64: 125_000_000,
+};
 
 test("creates Tauri platform entries and website download metadata", () => {
   const manifest = createUpdateManifest({
@@ -20,9 +44,9 @@ test("creates Tauri platform entries and website download metadata", () => {
     repository: "MicroSpotlight/OpenHarness",
     pubDate: "2026-08-15T12:00:00Z",
     notes: "Signed update",
-    signatures: { aarch64: signature, x86_64: signature },
-    checksums: { aarch64: checksum, x86_64: checksum },
-    sizes: { aarch64: 120_000_000, x86_64: 125_000_000 },
+    signatures,
+    checksums,
+    sizes,
   });
 
   assert.equal(manifest.version, "0.1.0-beta.1");
@@ -37,9 +61,19 @@ test("creates Tauri platform entries and website download metadata", () => {
   );
   assert.equal(manifest.downloads["darwin-aarch64"].name, "OpenHarness_0.1.0_arm64.dmg");
   assert.equal(manifest.downloads["darwin-x86_64"].size, 125_000_000);
+  assert.equal(
+    manifest.platforms["windows-x86_64"].url,
+    "https://github.com/MicroSpotlight/OpenHarness/releases/download/v0.1.0-beta.1/OpenHarness_0.1.0_x64-setup.exe",
+  );
+  assert.equal(
+    manifest.platforms["windows-aarch64"].url,
+    "https://github.com/MicroSpotlight/OpenHarness/releases/download/v0.1.0-beta.1/OpenHarness_0.1.0_arm64-setup.exe",
+  );
+  assert.equal(manifest.downloads["linux-x86_64"].name, "OpenHarness_0.1.0_amd64.AppImage");
+  assert.equal(manifest.downloads["linux-aarch64"].name, "OpenHarness_0.1.0_arm64.AppImage");
 });
 
-test("keeps user-facing DMG names separate from updater archives", () => {
+test("returns canonical installer and updater names for every platform", () => {
   assert.deepEqual(assetNames("1.2.3"), {
     aarch64: {
       updater: "OpenHarness_1.2.3_aarch64.app.tar.gz",
@@ -48,6 +82,24 @@ test("keeps user-facing DMG names separate from updater archives", () => {
     x86_64: {
       updater: "OpenHarness_1.2.3_x86_64.app.tar.gz",
       dmg: "OpenHarness_1.2.3_x64.dmg",
+    },
+    windows_x86_64: {
+      updater: "OpenHarness_1.2.3_x64-setup.exe",
+      installer: "OpenHarness_1.2.3_x64-setup.exe",
+    },
+    windows_aarch64: {
+      updater: "OpenHarness_1.2.3_arm64-setup.exe",
+      installer: "OpenHarness_1.2.3_arm64-setup.exe",
+    },
+    linux_x86_64: {
+      updater: "OpenHarness_1.2.3_amd64.AppImage",
+      installer: "OpenHarness_1.2.3_amd64.AppImage",
+      deb: "OpenHarness_1.2.3_amd64.deb",
+    },
+    linux_aarch64: {
+      updater: "OpenHarness_1.2.3_arm64.AppImage",
+      installer: "OpenHarness_1.2.3_arm64.AppImage",
+      deb: "OpenHarness_1.2.3_arm64.deb",
     },
   });
 });
@@ -76,9 +128,9 @@ test("requires canonical UTC RFC 3339 publication dates", () => {
     repository: "MicroSpotlight/OpenHarness",
     pubDate: "2026-08-15T12:00:00Z",
     notes: "Signed update",
-    signatures: { aarch64: signature, x86_64: signature },
-    checksums: { aarch64: checksum, x86_64: checksum },
-    sizes: { aarch64: 120_000_000, x86_64: 125_000_000 },
+    signatures,
+    checksums,
+    sizes,
   });
 
   manifest.pub_date = "2026-08-15";
@@ -96,9 +148,9 @@ test("rejects insecure release URLs and malformed checksums", () => {
     repository: "MicroSpotlight/OpenHarness",
     pubDate: "2026-08-15T12:00:00Z",
     notes: "Signed update",
-    signatures: { aarch64: signature, x86_64: signature },
-    checksums: { aarch64: checksum, x86_64: checksum },
-    sizes: { aarch64: 120_000_000, x86_64: 125_000_000 },
+    signatures,
+    checksums,
+    sizes,
   });
 
   manifest.platforms["darwin-aarch64"].url = "http://example.com/update.tar.gz";

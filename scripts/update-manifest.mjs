@@ -2,7 +2,14 @@ import { readFile, stat, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
 const APP_NAME = "OpenHarness";
-const PLATFORM_ARCHES = ["aarch64", "x86_64"];
+const PLATFORM_KEYS = [
+  "darwin-aarch64",
+  "darwin-x86_64",
+  "windows-aarch64",
+  "windows-x86_64",
+  "linux-aarch64",
+  "linux-x86_64",
+];
 const ASSET_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 const BUILD_NUMBER_PATTERN = /^(0|[1-9]\d*)(?:\.(0|[1-9]\d*)){0,2}$/;
@@ -95,6 +102,24 @@ export function assetNames(version) {
       updater: `${APP_NAME}_${version}_x86_64.app.tar.gz`,
       dmg: `${APP_NAME}_${version}_x64.dmg`,
     },
+    windows_x86_64: {
+      updater: `${APP_NAME}_${version}_x64-setup.exe`,
+      installer: `${APP_NAME}_${version}_x64-setup.exe`,
+    },
+    windows_aarch64: {
+      updater: `${APP_NAME}_${version}_arm64-setup.exe`,
+      installer: `${APP_NAME}_${version}_arm64-setup.exe`,
+    },
+    linux_x86_64: {
+      updater: `${APP_NAME}_${version}_amd64.AppImage`,
+      installer: `${APP_NAME}_${version}_amd64.AppImage`,
+      deb: `${APP_NAME}_${version}_amd64.deb`,
+    },
+    linux_aarch64: {
+      updater: `${APP_NAME}_${version}_arm64.AppImage`,
+      installer: `${APP_NAME}_${version}_arm64.AppImage`,
+      deb: `${APP_NAME}_${version}_arm64.deb`,
+    },
   };
 }
 
@@ -111,8 +136,12 @@ export function validateUpdateManifest(manifest) {
 
   const platforms = requireObject(manifest.platforms, "manifest.platforms");
   const downloads = requireObject(manifest.downloads, "manifest.downloads");
-  for (const arch of PLATFORM_ARCHES) {
-    const platformKey = `darwin-${arch}`;
+  const platformKeys = Object.keys(platforms);
+  if (platformKeys.length === 0) throw new Error("manifest.platforms must not be empty");
+  for (const platformKey of platformKeys) {
+    if (!PLATFORM_KEYS.includes(platformKey)) {
+      throw new Error(`manifest.platforms contains unsupported platform ${platformKey}`);
+    }
     const platform = requireObject(platforms[platformKey], `manifest.platforms.${platformKey}`);
     requireHttpsUrl(platform.url, `manifest.platforms.${platformKey}.url`);
     requireSignature(platform.signature, `manifest.platforms.${platformKey}.signature`);
@@ -123,6 +152,11 @@ export function validateUpdateManifest(manifest) {
     requirePositiveInteger(download.size, `manifest.downloads.${platformKey}.size`);
     if (!SHA256_PATTERN.test(download.sha256 ?? "")) {
       throw new Error(`manifest.downloads.${platformKey}.sha256 must be a lowercase SHA-256 digest`);
+    }
+  }
+  for (const platformKey of Object.keys(downloads)) {
+    if (!platforms[platformKey]) {
+      throw new Error(`manifest.downloads.${platformKey} does not have an updater platform entry`);
     }
   }
   return manifest;
@@ -147,6 +181,38 @@ export function createUpdateManifest({
     throw new Error("repository must use owner/name format");
   }
   const names = assetNames(assetVersion);
+  const artifacts = {
+    "darwin-aarch64": {
+      updater: names.aarch64.updater,
+      installer: names.aarch64.dmg,
+      values: "aarch64",
+    },
+    "darwin-x86_64": {
+      updater: names.x86_64.updater,
+      installer: names.x86_64.dmg,
+      values: "x86_64",
+    },
+    "windows-x86_64": {
+      updater: names.windows_x86_64.updater,
+      installer: names.windows_x86_64.installer,
+      values: "windows_x86_64",
+    },
+    "windows-aarch64": {
+      updater: names.windows_aarch64.updater,
+      installer: names.windows_aarch64.installer,
+      values: "windows_aarch64",
+    },
+    "linux-x86_64": {
+      updater: names.linux_x86_64.updater,
+      installer: names.linux_x86_64.installer,
+      values: "linux_x86_64",
+    },
+    "linux-aarch64": {
+      updater: names.linux_aarch64.updater,
+      installer: names.linux_aarch64.installer,
+      values: "linux_aarch64",
+    },
+  };
 
   return validateUpdateManifest({
     version,
@@ -154,22 +220,22 @@ export function createUpdateManifest({
     notes: typeof notes === "string" ? notes.trim() : "",
     pub_date: requireString(pubDate, "pubDate"),
     platforms: Object.fromEntries(
-      PLATFORM_ARCHES.map((arch) => [
-        `darwin-${arch}`,
+      Object.entries(artifacts).map(([platform, artifact]) => [
+        platform,
         {
-          signature: requireSignature(signatures[arch], `${arch} signature`),
-          url: releaseAssetUrl(repo, releaseTag, names[arch].updater),
+          signature: requireSignature(signatures[artifact.values], `${platform} signature`),
+          url: releaseAssetUrl(repo, releaseTag, artifact.updater),
         },
       ]),
     ),
     downloads: Object.fromEntries(
-      PLATFORM_ARCHES.map((arch) => [
-        `darwin-${arch}`,
+      Object.entries(artifacts).map(([platform, artifact]) => [
+        platform,
         {
-          url: releaseAssetUrl(repo, releaseTag, names[arch].dmg),
-          name: names[arch].dmg,
-          sha256: requireString(checksums[arch], `${arch} checksum`).toLowerCase(),
-          size: requirePositiveInteger(sizes[arch], `${arch} DMG size`),
+          url: releaseAssetUrl(repo, releaseTag, artifact.installer),
+          name: artifact.installer,
+          sha256: requireString(checksums[artifact.values], `${platform} checksum`).toLowerCase(),
+          size: requirePositiveInteger(sizes[artifact.values], `${platform} installer size`),
         },
       ]),
     ),
@@ -212,14 +278,26 @@ async function generate(options) {
     signatures: {
       aarch64: await readTrimmed(options["aarch64-signature"], "aarch64 signature"),
       x86_64: await readTrimmed(options["x86-signature"], "x86_64 signature"),
+      windows_x86_64: await readTrimmed(options["windows-x64-signature"], "Windows x64 signature"),
+      windows_aarch64: await readTrimmed(options["windows-arm64-signature"], "Windows arm64 signature"),
+      linux_x86_64: await readTrimmed(options["linux-x64-signature"], "Linux x64 signature"),
+      linux_aarch64: await readTrimmed(options["linux-arm64-signature"], "Linux arm64 signature"),
     },
     checksums: {
       aarch64: (await readTrimmed(options["aarch64-sha256"], "aarch64 checksum")).split(/\s+/)[0],
       x86_64: (await readTrimmed(options["x86-sha256"], "x86_64 checksum")).split(/\s+/)[0],
+      windows_x86_64: (await readTrimmed(options["windows-x64-sha256"], "Windows x64 checksum")).split(/\s+/)[0],
+      windows_aarch64: (await readTrimmed(options["windows-arm64-sha256"], "Windows arm64 checksum")).split(/\s+/)[0],
+      linux_x86_64: (await readTrimmed(options["linux-x64-sha256"], "Linux x64 checksum")).split(/\s+/)[0],
+      linux_aarch64: (await readTrimmed(options["linux-arm64-sha256"], "Linux arm64 checksum")).split(/\s+/)[0],
     },
     sizes: {
       aarch64: await readArtifactSize(options["aarch64-dmg"], "aarch64 DMG"),
       x86_64: await readArtifactSize(options["x86-dmg"], "x86_64 DMG"),
+      windows_x86_64: await readArtifactSize(options["windows-x64-installer"], "Windows x64 installer"),
+      windows_aarch64: await readArtifactSize(options["windows-arm64-installer"], "Windows arm64 installer"),
+      linux_x86_64: await readArtifactSize(options["linux-x64-appimage"], "Linux x64 AppImage"),
+      linux_aarch64: await readArtifactSize(options["linux-arm64-appimage"], "Linux arm64 AppImage"),
     },
   });
   await writeFile(options.output, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");

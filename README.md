@@ -2,8 +2,9 @@
 
 English | [简体中文](README.zh-CN.md)
 
-OpenHarness is a native macOS app that packages an open-source AI agent
-harness into a dedicated Tauri window. It bundles the published
+OpenHarness is a native desktop app for macOS, Windows, and Linux that packages
+an open-source AI agent harness into a dedicated Tauri window. It bundles the
+published
 [`@deepseek-ai/dsh`](https://www.npmjs.com/package/@deepseek-ai/dsh) runtime and
 Web UI, so normal use does not require a separate Node.js or command-line
 installation.
@@ -17,37 +18,52 @@ assets or imply endorsement by or affiliation with DeepSeek.
 
 ## Features
 
-- Native macOS window for the agent Web UI
+- Native desktop window for the agent Web UI on macOS, Windows, and Linux
 - Self-contained Node.js and locked agent runtime
-- Separate Apple Silicon and Intel release builds
+- Native installers for macOS, Windows, and Linux on arm64 and x64
 - Automatic loopback port selection to avoid conflicts
 - Shared configuration, credentials, sessions, and plugins in `~/.dsh`
 - Runtime telemetry disabled by the desktop launcher
-- Live Status Bar session menu: five prioritized tasks, 20 more recent
+- Live system-tray session menu: five prioritized tasks, 20 more recent
   sessions, and a link to the complete list in Harness
 - Single-instance lock: a second launch focuses the running instance
 - Automatic backend restart with exponential backoff and a native error dialog
   after repeated failures
 - One business window; selecting or creating a session reuses and focuses it
 - The window and native menus follow the configured dark/light appearance and locale
-- Loads `PATH` and `DEEPSEEK_*` variables from the login shell with a bounded
-  timeout so Finder launches can find user tools and configured credentials;
-  inherited DeepSeek variables take precedence
+- On macOS and Linux, loads `PATH` and `DEEPSEEK_*` variables from the login
+  shell with a bounded timeout so desktop launches can find user tools and
+  configured credentials; inherited DeepSeek variables take precedence
 
 ## Requirements
 
-- macOS 15.0 or later
+- macOS 15.0 or later (Apple Silicon or Intel)
+- Windows 10 1709 or later on x64 or arm64 with the Microsoft Edge WebView2
+  Runtime; Windows 11 is recommended
+- Linux x64 or arm64 with kernel 4.18+, glibc 2.35+, and WebKitGTK 4.1;
+  Ubuntu 22.04+ and Debian 12+ are the supported baselines
 - Credentials for at least one model provider supported by the bundled runtime
 
 ## Install
 
-Download the DMG for your Mac from
+Download the package for your platform from
 [GitHub Releases](https://github.com/MicroSpotlight/OpenHarness/releases):
 
-- `arm64` for Apple Silicon Macs
-- `x64` for Intel Macs
+- macOS Apple Silicon: `OpenHarness_<version>_arm64.dmg`
+- macOS Intel: `OpenHarness_<version>_x64.dmg`
+- Windows x64: `OpenHarness_<version>_x64-setup.exe`
+- Windows arm64: `OpenHarness_<version>_arm64-setup.exe`
+- Linux x64: `OpenHarness_<version>_amd64.AppImage` or
+  `OpenHarness_<version>_amd64.deb` or `OpenHarness_<version>_amd64.rpm`
+- Linux arm64: `OpenHarness_<version>_arm64.AppImage` or
+  `OpenHarness_<version>_arm64.deb` or `OpenHarness_<version>_arm64.rpm`
 
-Open the DMG, drag **OpenHarness** into **Applications**, and launch it.
+On macOS, open the DMG and drag **OpenHarness** into **Applications**. On
+Windows, run the NSIS installer. On Linux, install the Debian or RPM package,
+or mark the AppImage executable and launch it.
+
+macOS releases are Developer ID signed and notarized. The Windows installer is
+currently not Authenticode-signed, so Windows may show a publisher warning.
 
 ## Usage
 
@@ -67,22 +83,24 @@ upstream [user guide](https://github.com/deepseek-ai/deepseek-harness/tree/maste
    automatically selected port.
 2. The runtime selects an available local port and reports its loopback URL.
 3. OpenHarness validates that URL and opens it in a native webview.
-4. Closing the window hides it to the Status Bar. Quitting from its menu or
-   with `Cmd+Q` terminates the bundled runtime process.
+4. Closing the window hides it to the system tray. Quitting from the app menu
+   or tray terminates the bundled runtime process.
 
 The desktop host does not fork or reimplement the upstream Web UI. The runtime
 is assembled from the locked npm package by
-[`setup-runtime.sh`](setup-runtime.sh), then receives the independent
+[`scripts/setup-runtime.mjs`](scripts/setup-runtime.mjs), then receives the independent
 OpenHarness name, icon, and theme through
 [`scripts/brand-runtime.mjs`](scripts/brand-runtime.mjs).
 
 ## Build From Source
 
-Install these prerequisites:
+Install [Rust](https://www.rust-lang.org/tools/install), [Bun](https://bun.sh/),
+and the native toolchain for your platform:
 
-- Xcode Command Line Tools
-- [Rust](https://www.rust-lang.org/tools/install)
-- [Bun](https://bun.sh/)
+- macOS: Xcode Command Line Tools
+- Windows: Visual Studio Build Tools with the C++ workload and WebView2
+- Linux: WebKitGTK 4.1 and the other
+  [Tauri Linux prerequisites](https://v2.tauri.app/start/prerequisites/#linux)
 
 Then build the app:
 
@@ -90,9 +108,11 @@ Then build the app:
 git clone https://github.com/MicroSpotlight/OpenHarness.git
 cd OpenHarness
 bun install --frozen-lockfile
-./setup-runtime.sh
 bun run build
 ```
+
+`bun install` assembles the bundled runtime through `postinstall`. Run
+`bun run setup:runtime` to validate or rebuild it manually.
 
 Build artifacts are written under `src-tauri/target/release/bundle/`.
 
@@ -106,13 +126,12 @@ bun run dev
 
 ```text
 .
-|-- .github/workflows/     Signed macOS release automation
+|-- .github/workflows/     Cross-platform release and Pages automation
 |-- assets/                OpenHarness icon source
 |-- frontend/dist/         Tauri bootstrap page
 |-- runtime/               Locked bundled-runtime manifest
-|-- scripts/               Runtime branding and signing helpers
-|-- src-tauri/             Rust host and Tauri configuration
-`-- setup-runtime.sh       Bundled runtime assembler
+|-- scripts/               Runtime assembly, branding, release, and signing helpers
+`-- src-tauri/             Rust host and Tauri configuration
 ```
 
 `src-tauri/runtime/` is generated locally and excluded from Git.
@@ -137,7 +156,7 @@ project and its brand.
 ## Contributing
 
 Changes to the runtime or its Web UI should be contributed upstream. Issues and
-pull requests for the OpenHarness macOS host are welcome in this repository.
+pull requests for the OpenHarness desktop host are welcome in this repository.
 
 ## Copyright and Licenses
 

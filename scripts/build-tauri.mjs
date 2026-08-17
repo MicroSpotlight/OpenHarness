@@ -54,14 +54,14 @@ async function main(args) {
     bundle: { macOS: { bundleVersion: buildNumber } },
   });
 
-  console.log(`Building OpenHarness with macOS build number ${buildNumber}`);
+  console.log(`Building OpenHarness with build number ${buildNumber}`);
   const commandArguments = buildTauriArguments(args, configOverride);
   const child = spawn(
     "bun",
     ["run", "tauri", "build", ...commandArguments],
     {
       stdio: "inherit",
-      env: process.env,
+      env: { ...process.env, OPENHARNESS_BUILD_NUMBER: buildNumber },
     },
   );
   await new Promise((resolve, reject) => {

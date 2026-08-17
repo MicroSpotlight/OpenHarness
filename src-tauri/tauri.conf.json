@@ -15,10 +15,10 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
-    "targets": ["app", "dmg"],
+    "targets": "all",
     "category": "DeveloperTool",
-    "shortDescription": "Native AI desktop app for macOS",
-    "longDescription": "OpenHarness runs an open-source AI agent harness in a native macOS window.",
+    "shortDescription": "Native AI agent desktop app",
+    "longDescription": "OpenHarness runs an open-source AI agent harness in a native desktop window.",
     "copyright": "Copyright 2026 MicroSpotlight",
     "macOS": {
       "bundleVersion": "7",

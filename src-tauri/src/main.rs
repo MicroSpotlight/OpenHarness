@@ -2,7 +2,7 @@
 //!
 //! Spawns the bundled `dsh web` server as a supervised child process (auto
 //! restart on crash), hosts the browser UI in one native window, exposes live
-//! task state in the macOS menu bar, and enforces a single
+//! task state in the system tray, and enforces a single
 //! app instance. The bundled Node runtime and `@deepseek-ai/dsh` node_modules
 //! live under the app's resource directory (`runtime/**` in tauri.conf.json).
 
@@ -266,7 +266,11 @@ fn restart_delay(failures: u32) -> Duration {
 fn resolve_runtime(resource_dir: &Path) -> Result<(PathBuf, PathBuf, PathBuf), String> {
     let bases = [resource_dir.join("runtime"), resource_dir.to_path_buf()];
     for base in bases {
-        let node = base.join("node");
+        let node = base.join(if cfg!(target_os = "windows") {
+            "node.exe"
+        } else {
+            "node"
+        });
         let bin = base
             .join("dsh")
             .join("node_modules")
@@ -428,6 +432,7 @@ fn merge_path_values(shell_path: &str, inherited_path: Option<&OsStr>) -> OsStri
 /// Read PATH and DeepSeek variables from the user's login shell. Finder does
 /// not inherit the login environment, so desktop launches otherwise miss user
 /// tools and credentials. Values are bounded and never logged.
+#[cfg(unix)]
 fn load_shell_env() -> Result<Vec<(String, String)>, std::io::Error> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
     let output = command_stdout_with_timeout(
@@ -436,6 +441,11 @@ fn load_shell_env() -> Result<Vec<(String, String)>, std::io::Error> {
         SHELL_ENV_OUTPUT_LIMIT,
     )?;
     Ok(parse_shell_env(&output))
+}
+
+#[cfg(not(unix))]
+fn load_shell_env() -> Result<Vec<(String, String)>, std::io::Error> {
+    Ok(Vec::new())
 }
 
 fn load_shell_env_or_empty() -> Vec<(String, String)> {
@@ -484,7 +494,7 @@ fn spawn_harness(
     for (key, value) in shell_env {
         if key == "PATH" {
             command.env(key, merge_path_values(value, inherited_path.as_deref()));
-        } else if !std::env::var_os(key).is_some_and(|value| !value.is_empty()) {
+        } else if std::env::var_os(key).is_none_or(|value| value.is_empty()) {
             command.env(key, value);
         }
     }
@@ -1060,7 +1070,29 @@ fn installed_build_number(_app: &AppHandle) -> Result<String, String> {
 
 #[cfg(not(target_os = "macos"))]
 fn installed_build_number(app: &AppHandle) -> Result<String, String> {
-    validated_build_number(app.config().bundle.macos.bundle_version.as_deref())
+    validated_build_number(
+        option_env!("OPENHARNESS_BUILD_NUMBER").or(app
+            .config()
+            .bundle
+            .macos
+            .bundle_version
+            .as_deref()),
+    )
+}
+
+#[cfg(unix)]
+fn terminate_backend_process(pid: u32) {
+    unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+}
+
+#[cfg(target_os = "windows")]
+fn terminate_backend_process(pid: u32) {
+    let _ = Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 fn compare_core_versions(left: &Version, right: &Version) -> CompareOrdering {
@@ -1576,7 +1608,7 @@ fn main() {
                 ..
             } => {
                 // Close-to-tray: hide instead of destroying the window, so the
-                // backend and its session stay alive in the menu bar.
+                // backend and its session stay alive in the system tray.
                 api.prevent_close();
                 if let Some(window) = app_handle.get_webview_window(&label) {
                     let _ = window.hide();
@@ -1587,11 +1619,11 @@ fn main() {
                 state.quitting.store(true, Ordering::SeqCst);
                 let pid = state.child_pid.lock().unwrap().take();
                 if let Some(pid) = pid {
-                    unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+                    terminate_backend_process(pid);
                 }
             }
             // macOS: clicking the Dock icon with no visible windows reopens.
-            #[allow(unreachable_patterns)]
+            #[cfg(target_os = "macos")]
             RunEvent::Reopen { .. } => show_main_window(app_handle),
             _ => {}
         });

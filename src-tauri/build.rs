@@ -75,6 +75,11 @@ fn main() {
     #[cfg(target_os = "macos")]
     compile_native_context_menu(&manifest_dir);
 
+    println!("cargo:rerun-if-env-changed=OPENHARNESS_BUILD_NUMBER");
+    if let Ok(build_number) = env::var("OPENHARNESS_BUILD_NUMBER") {
+        println!("cargo:rustc-env=OPENHARNESS_BUILD_NUMBER={build_number}");
+    }
+
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&["sync_dsh_preferences", "sync_dsh_sessions"]),
     ))

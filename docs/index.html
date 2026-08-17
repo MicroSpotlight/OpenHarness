@@ -5,14 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta
       name="description"
-      content="OpenHarness 是由 MicroSpotlight 独立开发的原生 macOS AI Agent 应用，内置开源 DeepSeek Harness 运行环境。"
+      content="OpenHarness 是由 MicroSpotlight 独立开发的跨平台 AI Agent 桌面应用，支持 macOS、Windows 和 Linux，内置开源 DeepSeek Harness 运行环境。"
     >
     <meta name="theme-color" content="#f4f6f8">
     <meta property="og:type" content="website">
     <meta property="og:title" content="OpenHarness">
     <meta
       property="og:description"
-      content="在原生 macOS 窗口中启动完整、可组合、可追溯的 AI Agent 工作空间。"
+      content="在 macOS、Windows 或 Linux 桌面启动完整、可组合、可追溯的 AI Agent 工作空间。"
     >
     <meta
       property="og:image"
@@ -22,7 +22,7 @@
     <link rel="canonical" href="https://openharness.microspotlight.team/">
     <link rel="icon" type="image/png" href="assets/app-icon.png">
     <link rel="apple-touch-icon" href="assets/app-icon.png">
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles.css?v=20260817-6">
     <title>OpenHarness</title>
   </head>
   <body>
@@ -82,41 +82,26 @@
 
     <main id="main">
       <section class="hero" id="top">
-        <div class="hero-grid" aria-hidden="true"></div>
         <div class="hero-shell">
           <div class="hero-copy">
             <div class="eyebrow">
               <span class="status-dot"></span>
-              <span data-i18n="heroEyebrow">原生 macOS AI Agent 应用</span>
+              <span data-i18n="heroEyebrow">跨平台原生 AI Agent 桌面应用</span>
             </div>
             <h1>
               <span data-i18n="heroTitleTop">OpenHarness</span>
-              <span class="accent-line" data-i18n="heroTitleBottom">让 Harness 原生运行。</span>
+              <span class="accent-line" data-i18n="heroTitleBottom">让 Harness 跨平台原生运行。</span>
             </h1>
             <p class="hero-lede" data-i18n="heroLede">
               无需单独安装 Node.js 或输入启动命令。打开原生窗口，直接进入完整、可组合、可追溯的 Agent 工作空间。
             </p>
             <div class="hero-actions">
-              <a
-                class="button button-primary"
-                href="https://github.com/MicroSpotlight/OpenHarness/releases"
-                data-download-platform="darwin-aarch64"
-              >
+              <a class="button button-primary hero-download-link" href="#download">
                 <i data-lucide="download" aria-hidden="true"></i>
-                <span data-i18n="downloadAppleSilicon">下载 Apple Silicon</span>
-              </a>
-              <a
-                class="button button-secondary"
-                href="https://github.com/MicroSpotlight/OpenHarness/releases"
-                data-download-platform="darwin-x86_64"
-              >
-                <i data-lucide="download" aria-hidden="true"></i>
-                <span data-i18n="downloadIntel">下载 Intel</span>
+                <span data-i18n="heroDownloadCta">前往下载</span>
+                <i class="button-tail" data-lucide="arrow-down" aria-hidden="true"></i>
               </a>
             </div>
-            <p class="release-note">
-              <span data-release-summary>macOS 15.0+ · Apple Silicon 与 Intel</span>
-            </p>
           </div>
 
           <figure class="product-stage" aria-label="OpenHarness 应用界面" data-i18n-aria="productStageLabel">
@@ -160,13 +145,135 @@
         </div>
       </section>
 
+      <section class="download-section" id="download">
+        <div class="section-shell">
+          <div class="section-heading download-heading">
+            <div>
+              <p class="section-kicker" data-i18n="downloadKicker">下载</p>
+              <h2 data-i18n="downloadTitle">选择适合这台设备的安装包。</h2>
+            </div>
+            <div class="download-heading-copy">
+              <p data-i18n="downloadBody">安装包已包含运行环境，无需另外安装 Node.js。页面会优先标出当前设备对应的版本。</p>
+              <p class="download-release-note" data-release-summary>macOS 15+ · Windows 10+ · Linux x64/ARM64</p>
+            </div>
+          </div>
+
+          <div class="platform-download-grid" role="group" aria-label="平台下载" data-i18n-aria="downloadGroupLabel">
+            <article class="platform-download">
+              <div class="platform-download-head">
+                <i data-lucide="apple" aria-hidden="true"></i>
+                <div>
+                  <h3>macOS</h3>
+                  <p data-i18n="macSupport">macOS 15+ · Apple Silicon / Intel</p>
+                </div>
+              </div>
+              <div class="package-meta">
+                <span data-i18n="diskImageLabel">磁盘映像</span>
+                <strong>.dmg</strong>
+              </div>
+              <div class="platform-download-actions" data-download-group data-secondary-class="button-secondary">
+                <a
+                  class="button button-secondary download-button"
+                  href="https://github.com/MicroSpotlight/OpenHarness/releases"
+                  data-download-platform="darwin-aarch64"
+                >
+                  <i data-lucide="download" aria-hidden="true"></i>
+                  <span data-i18n="downloadAppleSilicon">Apple Silicon</span>
+                </a>
+                <a
+                  class="button button-secondary download-button"
+                  href="https://github.com/MicroSpotlight/OpenHarness/releases"
+                  data-download-platform="darwin-x86_64"
+                >
+                  <i data-lucide="download" aria-hidden="true"></i>
+                  <span data-i18n="downloadIntel">Intel</span>
+                </a>
+              </div>
+            </article>
+
+            <article class="platform-download">
+              <div class="platform-download-head">
+                <i data-lucide="monitor-down" aria-hidden="true"></i>
+                <div>
+                  <h3>Windows</h3>
+                  <p data-i18n="windowsSupport">Windows 10 / 11 · x64 / ARM64</p>
+                </div>
+              </div>
+              <div class="package-meta">
+                <span data-i18n="packageLabel">安装程序</span>
+                <strong>.exe</strong>
+              </div>
+              <div class="platform-download-actions" data-download-group data-secondary-class="button-secondary">
+                <a
+                  class="button button-secondary download-button"
+                  href="https://github.com/MicroSpotlight/OpenHarness/releases"
+                  data-download-platform="windows-x86_64"
+                >
+                  <i data-lucide="download" aria-hidden="true"></i>
+                  <span data-i18n="downloadWindows">x64</span>
+                </a>
+                <a
+                  class="button button-secondary download-button"
+                  href="https://github.com/MicroSpotlight/OpenHarness/releases"
+                  data-download-platform="windows-aarch64"
+                >
+                  <i data-lucide="download" aria-hidden="true"></i>
+                  <span data-i18n="downloadWindowsArm">ARM64</span>
+                </a>
+              </div>
+            </article>
+
+            <article class="platform-download">
+              <div class="platform-download-head">
+                <i data-lucide="terminal" aria-hidden="true"></i>
+                <div>
+                  <h3>Linux</h3>
+                  <p data-i18n="linuxSupport">Ubuntu 22.04+ / Debian 12+ · x64 / ARM64</p>
+                </div>
+              </div>
+              <div class="package-meta">
+                <span data-i18n="portablePackageLabel">便携应用</span>
+                <strong>AppImage</strong>
+              </div>
+              <div class="platform-download-actions" data-download-group data-secondary-class="button-secondary">
+                <a
+                  class="button button-secondary download-button"
+                  href="https://github.com/MicroSpotlight/OpenHarness/releases"
+                  data-download-platform="linux-x86_64"
+                >
+                  <i data-lucide="download" aria-hidden="true"></i>
+                  <span data-i18n="downloadLinux">x64</span>
+                </a>
+                <a
+                  class="button button-secondary download-button"
+                  href="https://github.com/MicroSpotlight/OpenHarness/releases"
+                  data-download-platform="linux-aarch64"
+                >
+                  <i data-lucide="download" aria-hidden="true"></i>
+                  <span data-i18n="downloadLinuxArm">ARM64</span>
+                </a>
+              </div>
+              <a
+                class="download-alternative"
+                href="https://github.com/MicroSpotlight/OpenHarness/releases"
+                target="_blank"
+                rel="noreferrer"
+              >
+                <span data-i18n="linuxDebDownload">需要 .deb 或 .rpm？查看全部发布文件</span>
+                <i data-lucide="arrow-up-right" aria-hidden="true"></i>
+              </a>
+            </article>
+          </div>
+        </div>
+      </section>
+
       <section class="experience-section" id="experience">
         <div class="section-shell experience-grid">
           <div class="section-copy sticky-copy">
             <p class="section-kicker" data-i18n="experienceKicker">完整 Harness 体验</p>
             <h2 data-i18n="experienceTitle">桌面宿主，不是另一套生态。</h2>
             <p data-i18n="experienceBody">
-              OpenHarness 将 DeepSeek Harness（DSH）完整装进原生 macOS 应用。模型、工具、技能、会话与插件保持一致，只是使用入口从命令行变成桌面窗口。
+              OpenHarness 将 DeepSeek Harness（DSH）完整装进跨平台桌面应用。模型、工具、技能、会话与插件保持一致，只是使用入口从命令行变成桌面窗口。
             </p>
             <a
               class="text-link"
@@ -194,7 +301,7 @@
               <div>
                 <h3 data-i18n="experienceTwoTitle">原生桌面体验</h3>
                 <p data-i18n="experienceTwoBody">
-                  从 Dock 打开窗口，关闭后继续驻留菜单栏，需要时随时回到工作区。
+                  从桌面打开窗口，关闭后继续驻留系统托盘，需要时随时回到工作区。
                 </p>
               </div>
             </article>
@@ -274,7 +381,7 @@
               <i data-lucide="app-window" aria-hidden="true"></i>
               <div>
                 <h3 data-i18n="flowOneTitle">下载并打开</h3>
-                <p data-i18n="flowOneBody">选择适合 Mac 芯片的安装包，完成安装后直接打开 OpenHarness。</p>
+                <p data-i18n="flowOneBody">选择当前系统和架构对应的安装包，完成安装后直接打开 OpenHarness。</p>
               </div>
             </li>
             <li>
@@ -352,11 +459,11 @@
             </details>
             <details>
               <summary><span data-i18n="faqFourQuestion">目前支持哪些平台？</span><i data-lucide="plus" aria-hidden="true"></i></summary>
-              <p data-i18n="faqFourAnswer">OpenHarness 支持 macOS 15.0 或更高版本，分别提供 Apple Silicon arm64 与 Intel x64 原生构建。</p>
+              <p data-i18n="faqFourAnswer">OpenHarness 支持 macOS 15.0+、Windows 10+ x64/ARM64，以及 Ubuntu 22.04+、Debian 12+ 等 x64/ARM64 Linux 发行版；Linux 需要 glibc 2.35+ 和 WebKitGTK 4.1。</p>
             </details>
             <details>
               <summary><span data-i18n="faqFiveQuestion">如何选择下载架构？</span><i data-lucide="plus" aria-hidden="true"></i></summary>
-              <p data-i18n="faqFiveAnswer">Apple M 系列芯片选择 arm64；Intel 处理器选择 x64。发布页会分别提供两个安装包。</p>
+              <p data-i18n="faqFiveAnswer">按设备架构选择 x64 或 ARM64：macOS 使用 DMG，Windows 使用 EXE，Linux 可选择 AppImage、Debian 或 RPM 包。</p>
             </details>
           </div>
         </div>
@@ -365,27 +472,18 @@
       <section class="final-cta">
         <div class="cta-grid" aria-hidden="true"></div>
         <div class="section-shell cta-content">
-          <img src="assets/app-icon.png" alt="" width="76" height="76">
-          <p class="section-kicker" data-i18n="ctaKicker">OpenHarness</p>
-          <h2 data-i18n="ctaTitle">让下一次 Harness 运行，从桌面开始。</h2>
-          <div class="hero-actions centered-actions">
-            <a
-              class="button button-primary"
-              href="https://github.com/MicroSpotlight/OpenHarness/releases"
-              data-download-platform="darwin-aarch64"
-            >
-              <i data-lucide="download" aria-hidden="true"></i>
-              <span data-i18n="downloadAppleSilicon">下载 Apple Silicon</span>
-            </a>
-            <a
-              class="button button-ghost-light"
-              href="https://github.com/MicroSpotlight/OpenHarness/releases"
-              data-download-platform="darwin-x86_64"
-            >
-              <i data-lucide="download" aria-hidden="true"></i>
-              <span data-i18n="downloadIntel">下载 Intel</span>
-            </a>
+          <div class="cta-message">
+            <img src="assets/app-icon.png" alt="" width="54" height="54">
+            <div>
+              <p class="section-kicker" data-i18n="ctaKicker">准备开始</p>
+              <h2 data-i18n="ctaTitle">让下一次 Harness 运行，从桌面开始。</h2>
+            </div>
           </div>
+          <a class="button button-primary cta-download-link" href="#download">
+            <i data-lucide="download" aria-hidden="true"></i>
+            <span data-i18n="ctaDownloadCta">选择安装包</span>
+            <i class="button-tail" data-lucide="arrow-up" aria-hidden="true"></i>
+          </a>
         </div>
       </section>
     </main>
@@ -409,6 +507,6 @@
     </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-    <script src="site.js" defer></script>
+    <script src="site.js?v=20260817-3" defer></script>
   </body>
 </html>
