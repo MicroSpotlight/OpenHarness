@@ -189,7 +189,7 @@ async function installNode(target) {
   return nodePath;
 }
 
-function nativePackagePaths(target) {
+export function nativePackagePaths(target) {
   const paths = [
     `@koromix/koffi-${target.os}-${target.cpu}`,
     `@vscode/ripgrep-${target.os}-${target.cpu}`,
@@ -200,7 +200,7 @@ function nativePackagePaths(target) {
       ? `${target.os}-${target.cpu}-msvc`
       : `${target.os}-${target.cpu}`;
   paths.push(`node-addon-require-builtin-${requireBuiltinSuffix}`);
-  if (target.os !== "linux") paths.push(`node-pty/prebuilds/${target.os}-${target.cpu}`);
+  paths.push(`node-pty/prebuilds/${target.os}-${target.cpu}`);
   if (target.os === "darwin") {
     paths.push(`@img/sharp-darwin-${target.cpu}`, `@img/sharp-libvips-darwin-${target.cpu}`);
   } else if (target.os === "linux") {
@@ -236,13 +236,6 @@ async function verifyRuntime(target, nodePath) {
     const absolute = join(DSH_DIR, "node_modules", packagePath);
     if (!(await directoryExists(absolute)) || (await collectFiles(absolute)).length === 0) {
       throw new Error(`Bundled native package is missing for ${target.key}: ${packagePath}`);
-    }
-  }
-
-  if (target.os === "linux" && target.os === process.platform && target.cpu === process.arch) {
-    const linuxPty = join(DSH_DIR, "node_modules", "node-pty", "build", "Release", "pty.node");
-    if (!(await fileExists(linuxPty))) {
-      throw new Error("node-pty did not produce build/Release/pty.node on Linux");
     }
   }
 

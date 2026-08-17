@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   incompatibleNativeArtifactPaths,
+  nativePackagePaths,
   resolveRuntimeTarget,
 } from "./setup-runtime.mjs";
 
@@ -35,4 +36,17 @@ test("excludes only musl artifacts from GNU Linux release runtimes", () => {
   ]);
   assert.deepEqual(incompatibleNativeArtifactPaths({ os: "darwin", cpu: "arm64" }), []);
   assert.deepEqual(incompatibleNativeArtifactPaths({ os: "win32", cpu: "x64" }), []);
+});
+
+test("requires the target-specific node-pty prebuild on every platform", () => {
+  for (const target of [
+    { os: "darwin", cpu: "arm64" },
+    { os: "linux", cpu: "x64" },
+    { os: "linux", cpu: "arm64" },
+    { os: "win32", cpu: "x64" },
+  ]) {
+    assert.ok(
+      nativePackagePaths(target).includes(`node-pty/prebuilds/${target.os}-${target.cpu}`),
+    );
+  }
 });
