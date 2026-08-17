@@ -46,6 +46,19 @@ assets or imply endorsement by or affiliation with DeepSeek.
 
 ## Install
 
+### Homebrew (macOS)
+
+Install from the [MicroSpotlight Homebrew tap](https://github.com/MicroSpotlight/homebrew-tap):
+
+```sh
+brew install --cask microspotlight/tap/openharness
+```
+
+The cask automatically selects the Apple Silicon or Intel build for the current
+Mac.
+
+### Direct downloads
+
 Download the package for your platform from
 [GitHub Releases](https://github.com/MicroSpotlight/OpenHarness/releases):
 

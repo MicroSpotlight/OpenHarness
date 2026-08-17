@@ -40,6 +40,19 @@ OpenHarness 由 MicroSpotlight 独立开发。为避免与 DeepSeek 品牌产生
 
 ## 安装
 
+### Homebrew（macOS）
+
+通过 [MicroSpotlight Homebrew Tap](https://github.com/MicroSpotlight/homebrew-tap)
+安装：
+
+```sh
+brew install --cask microspotlight/tap/openharness
+```
+
+Cask 会根据当前 Mac 自动选择 Apple Silicon 或 Intel 版本。
+
+### 直接下载
+
 从 [GitHub Releases](https://github.com/MicroSpotlight/OpenHarness/releases)
 下载对应平台的安装包：
 

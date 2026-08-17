@@ -25,6 +25,9 @@ const copy = {
     portablePackageLabel: "便携应用",
     diskImageLabel: "磁盘映像",
     linuxDebDownload: "需要 .deb 或 .rpm？查看全部发布文件",
+    homebrewInstall: "使用 Homebrew 安装",
+    copyHomebrewCommand: "复制 Homebrew 安装命令",
+    homebrewCommandCopied: "Homebrew 安装命令已复制",
     downloadAppleSilicon: "Apple Silicon",
     downloadIntel: "Intel",
     downloadWindows: "x64",
@@ -93,7 +96,7 @@ const copy = {
     faqFourQuestion: "目前支持哪些平台？",
     faqFourAnswer: "OpenHarness 支持 macOS 15.0+、Windows 10+ x64/ARM64，以及 Ubuntu 22.04+、Debian 12+ 等 x64/ARM64 Linux 发行版；Linux 需要 glibc 2.35+ 和 WebKitGTK 4.1。",
     faqFiveQuestion: "如何选择下载架构？",
-    faqFiveAnswer: "按设备架构选择 x64 或 ARM64：macOS 使用 DMG，Windows 使用 EXE，Linux 可选择 AppImage、Debian 或 RPM 包。",
+    faqFiveAnswer: "按设备架构选择 x64 或 ARM64：macOS 使用 DMG，Windows 使用 EXE，Linux 可选择 AppImage、Debian 或 RPM 包。通过 Homebrew 安装 macOS 版本时会自动选择架构。",
     ctaKicker: "准备开始",
     ctaTitle: "让下一次 Harness 运行，从桌面开始。",
     ctaDownloadCta: "选择安装包",
@@ -127,6 +130,9 @@ const copy = {
     portablePackageLabel: "Portable app",
     diskImageLabel: "Disk image",
     linuxDebDownload: "Need a .deb or .rpm? View all release files",
+    homebrewInstall: "Install with Homebrew",
+    copyHomebrewCommand: "Copy Homebrew install command",
+    homebrewCommandCopied: "Homebrew install command copied",
     downloadAppleSilicon: "Apple Silicon",
     downloadIntel: "Intel",
     downloadWindows: "x64",
@@ -195,7 +201,7 @@ const copy = {
     faqFourQuestion: "Which platforms are supported?",
     faqFourAnswer: "OpenHarness supports macOS 15.0+, Windows 10+ on x64/ARM64, and x64/ARM64 Linux distributions such as Ubuntu 22.04+ and Debian 12+; Linux requires glibc 2.35+ and WebKitGTK 4.1.",
     faqFiveQuestion: "Which download architecture should I choose?",
-    faqFiveAnswer: "Choose x64 or ARM64 for your device: DMG on macOS, EXE on Windows, or AppImage, Debian, and RPM packages on Linux.",
+    faqFiveAnswer: "Choose x64 or ARM64 for your device: DMG on macOS, EXE on Windows, or AppImage, Debian, and RPM packages on Linux. Homebrew selects the macOS architecture automatically.",
     ctaKicker: "Ready when you are",
     ctaTitle: "Start your next Harness run from the desktop.",
     ctaDownloadCta: "Choose a download",
@@ -209,8 +215,10 @@ const languageButton = document.querySelector("[data-language]");
 const menuButton = document.querySelector("[data-menu-button]");
 const mobileMenu = document.querySelector("[data-mobile-menu]");
 const header = document.querySelector("[data-header]");
+const homebrewCopyButton = document.querySelector("[data-copy-command]");
 let activeLanguage = localStorage.getItem("openharness-language") === "en" ? "en" : "zh";
 let latestRelease;
+let copyFeedbackTimer;
 
 function formatFileSize(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -286,6 +294,45 @@ function renderLatestRelease() {
   });
 }
 
+async function copyHomebrewCommand() {
+  const command = homebrewCopyButton.dataset.copyCommand;
+  let copied = false;
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(command);
+      copied = true;
+    } catch {
+      // Fall back when clipboard access is unavailable or denied.
+    }
+  }
+  if (!copied) {
+    const input = document.createElement("textarea");
+    input.value = command;
+    input.style.position = "fixed";
+    input.style.opacity = "0";
+    document.body.append(input);
+    input.select();
+    copied = document.execCommand("copy");
+    input.remove();
+    if (!copied) throw new Error("Unable to copy command");
+  }
+
+  const copiedLabel = copy[activeLanguage].homebrewCommandCopied;
+  homebrewCopyButton.setAttribute("aria-label", copiedLabel);
+  homebrewCopyButton.setAttribute("title", copiedLabel);
+  homebrewCopyButton.innerHTML = `<code>${command}</code><i data-lucide="check" aria-hidden="true"></i>`;
+  if (window.lucide) window.lucide.createIcons();
+
+  clearTimeout(copyFeedbackTimer);
+  copyFeedbackTimer = setTimeout(() => {
+    const copyLabel = copy[activeLanguage].copyHomebrewCommand;
+    homebrewCopyButton.setAttribute("aria-label", copyLabel);
+    homebrewCopyButton.setAttribute("title", copyLabel);
+    homebrewCopyButton.innerHTML = `<code>${command}</code><i data-lucide="copy" aria-hidden="true"></i>`;
+    if (window.lucide) window.lucide.createIcons();
+  }, 1800);
+}
+
 async function loadLatestRelease() {
   try {
     const response = await fetch("latest.json", { cache: "no-cache" });
@@ -315,6 +362,10 @@ function translate(language) {
     const value = copy[language][element.dataset.i18nAlt];
     if (value) element.setAttribute("alt", value);
   });
+  document.querySelectorAll("[data-i18n-title]").forEach((element) => {
+    const value = copy[language][element.dataset.i18nTitle];
+    if (value) element.setAttribute("title", value);
+  });
 
   languageButton.setAttribute(
     "aria-label",
@@ -335,6 +386,10 @@ function closeMenu() {
 
 languageButton.addEventListener("click", () => {
   translate(activeLanguage === "zh" ? "en" : "zh");
+});
+
+homebrewCopyButton.addEventListener("click", () => {
+  copyHomebrewCommand().catch(() => {});
 });
 
 menuButton.addEventListener("click", () => {

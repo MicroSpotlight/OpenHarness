@@ -22,7 +22,7 @@
     <link rel="canonical" href="https://openharness.microspotlight.team/">
     <link rel="icon" type="image/png" href="assets/app-icon.png">
     <link rel="apple-touch-icon" href="assets/app-icon.png">
-    <link rel="stylesheet" href="styles.css?v=20260817-6">
+    <link rel="stylesheet" href="styles.css?v=20260817-8">
     <title>OpenHarness</title>
   </head>
   <body>
@@ -188,6 +188,29 @@
                   <i data-lucide="download" aria-hidden="true"></i>
                   <span data-i18n="downloadIntel">Intel</span>
                 </a>
+              </div>
+              <div class="homebrew-install">
+                <a
+                  class="download-alternative"
+                  href="https://github.com/MicroSpotlight/homebrew-tap"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <span data-i18n="homebrewInstall">使用 Homebrew 安装</span>
+                  <i data-lucide="arrow-up-right" aria-hidden="true"></i>
+                </a>
+                <button
+                  class="homebrew-command"
+                  type="button"
+                  data-copy-command="brew install --cask microspotlight/tap/openharness"
+                  aria-label="复制 Homebrew 安装命令"
+                  data-i18n-aria="copyHomebrewCommand"
+                  title="复制 Homebrew 安装命令"
+                  data-i18n-title="copyHomebrewCommand"
+                >
+                  <code>brew install --cask microspotlight/tap/openharness</code>
+                  <i data-lucide="copy" aria-hidden="true"></i>
+                </button>
               </div>
             </article>
 
@@ -507,6 +530,6 @@
     </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-    <script src="site.js?v=20260817-3" defer></script>
+    <script src="site.js?v=20260817-4" defer></script>
   </body>
 </html>

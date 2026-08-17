@@ -569,6 +569,51 @@ h1 span {
   color: var(--ink);
 }
 
+.homebrew-install {
+  margin-top: 16px;
+}
+
+.homebrew-install .download-alternative {
+  margin-top: 0;
+}
+
+.homebrew-command {
+  display: grid;
+  width: 100%;
+  min-height: 42px;
+  grid-template-columns: minmax(0, 1fr) 20px;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 8px 10px 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #f8f9fa;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.homebrew-command code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.homebrew-command svg {
+  width: 17px;
+  height: 17px;
+  color: var(--muted);
+}
+
+.homebrew-command:hover,
+.homebrew-command:focus-visible {
+  border-color: #aeb5bf;
+  background: var(--white);
+}
+
 .experience-section,
 .capabilities-section,
 .how-section,
@@ -1051,7 +1096,9 @@ h1 span {
     border-right: 0;
   }
 
+  .platform-download:nth-child(3) .package-meta,
   .platform-download:nth-child(3) .platform-download-actions {
+    width: 100%;
     max-width: 520px;
   }
 
@@ -1197,6 +1244,7 @@ h1 span {
     margin-top: 24px;
   }
 
+  .platform-download:nth-child(3) .package-meta,
   .platform-download:nth-child(3) .platform-download-actions {
     max-width: none;
   }
