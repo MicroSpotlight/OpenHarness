@@ -11,6 +11,7 @@
 use std::cmp::Ordering as CompareOrdering;
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
+use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -49,6 +50,9 @@ const STABLE_BACKEND_UPTIME: Duration = Duration::from_secs(30);
 const SHELL_ENV_TIMEOUT: Duration = Duration::from_secs(5);
 /// A normal login environment is small; larger output is treated as invalid.
 const SHELL_ENV_OUTPUT_LIMIT: usize = 1024 * 1024;
+const MANAGED_RUNTIME_PROTOCOL_VERSION: &str = "1";
+const MANAGED_RESTART_EXIT_CODE: i32 = 75;
+const DSH_PROFILE_NAME: &str = "web";
 const UPDATE_NOTES_LIMIT: usize = 1_200;
 const APP_UPDATE_MENU_ID: &str = "app-update";
 const SESSION_MENU_LABEL_LIMIT: usize = 96;
@@ -259,11 +263,23 @@ fn restart_delay(failures: u32) -> Duration {
     Duration::from_secs(2u64.saturating_pow(failures.min(6)).min(30))
 }
 
-/// Locate the bundled Node binary, `dsh` entry script, and native bridge patch
-/// inside the app
+fn is_managed_restart_code(code: Option<i32>) -> bool {
+    code == Some(MANAGED_RESTART_EXIT_CODE)
+}
+
+struct RuntimePaths {
+    root: PathBuf,
+    node: PathBuf,
+    dsh_entry: PathBuf,
+    patch: PathBuf,
+    package_manager_bin: PathBuf,
+}
+
+/// Locate the bundled Node binary, `dsh` entry script, native bridge patch,
+/// and package manager launcher inside the app
 /// resources. Handles both the directory-preserving and directory-flattening
 /// ways Tauri can lay out a bundled `runtime` resource.
-fn resolve_runtime(resource_dir: &Path) -> Result<(PathBuf, PathBuf, PathBuf), String> {
+fn resolve_runtime(resource_dir: &Path) -> Result<RuntimePaths, String> {
     let bases = [resource_dir.join("runtime"), resource_dir.to_path_buf()];
     for base in bases {
         let node = base.join(if cfg!(target_os = "windows") {
@@ -279,12 +295,24 @@ fn resolve_runtime(resource_dir: &Path) -> Result<(PathBuf, PathBuf, PathBuf), S
             .join("lib")
             .join("bin.js");
         let patch = base.join("dsh").join("openharness.patch.yml");
-        if node.exists() && bin.exists() && patch.exists() {
-            return Ok((node, bin, patch));
+        let package_manager_bin = base.join("dsh").join("openharness-bin");
+        let package_manager = package_manager_bin.join(if cfg!(target_os = "windows") {
+            "pnpm.cmd"
+        } else {
+            "pnpm"
+        });
+        if node.exists() && bin.exists() && patch.exists() && package_manager.exists() {
+            return Ok(RuntimePaths {
+                root: base,
+                node,
+                dsh_entry: bin,
+                patch,
+                package_manager_bin,
+            });
         }
     }
     Err(format!(
-        "bundled runtime not found under {} (expected runtime/node, runtime/dsh/node_modules, and runtime/dsh/openharness.patch.yml)",
+        "bundled runtime not found under {} (expected Node, DSH, the OpenHarness patch, and the pnpm launcher)",
         resource_dir.display()
     ))
 }
@@ -415,18 +443,51 @@ fn parse_shell_env(output: &[u8]) -> Vec<(String, String)> {
         .collect()
 }
 
-fn merge_path_values(shell_path: &str, inherited_path: Option<&OsStr>) -> OsString {
+fn managed_runtime_path(
+    runtime: &RuntimePaths,
+    shell_env: &[(String, String)],
+    inherited_path: Option<&OsStr>,
+) -> OsString {
     let mut seen = HashSet::new();
     let mut paths = Vec::new();
-    let sources = std::iter::once(OsStr::new(shell_path)).chain(inherited_path);
-
-    for path in sources.flat_map(std::env::split_paths) {
-        if !path.as_os_str().is_empty() && seen.insert(path.clone()) {
+    for path in [
+        runtime.package_manager_bin.clone(),
+        runtime
+            .node
+            .parent()
+            .expect("bundled Node path has no parent")
+            .to_path_buf(),
+    ] {
+        if seen.insert(path.clone()) {
             paths.push(path);
         }
     }
+    let shell_path = shell_env
+        .iter()
+        .find_map(|(key, value)| (key == "PATH").then_some(value.as_str()));
+    for source in shell_path.map(OsStr::new).into_iter().chain(inherited_path) {
+        for path in std::env::split_paths(source) {
+            if !path.as_os_str().is_empty() && seen.insert(path.clone()) {
+                paths.push(path);
+            }
+        }
+    }
+    std::env::join_paths(paths)
+        .unwrap_or_else(|_| inherited_path.map(OsString::from).unwrap_or_default())
+}
 
-    std::env::join_paths(paths).unwrap_or_else(|_| OsString::from(shell_path))
+fn resolve_dsh_home(home: &Path) -> PathBuf {
+    std::env::var_os("DSH_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .map(|path| {
+            if path.is_absolute() {
+                path
+            } else {
+                home.join(path)
+            }
+        })
+        .unwrap_or_else(|| home.join(".dsh"))
 }
 
 /// Read PATH and DeepSeek variables from the user's login shell. Finder does
@@ -476,28 +537,52 @@ fn spawn_harness(
     home: &Path,
     shell_env: &[(String, String)],
 ) -> Result<(Child, Url), Box<dyn std::error::Error>> {
-    let (node, bin, patch) = resolve_runtime(resource_dir)
+    let runtime = resolve_runtime(resource_dir)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e))?;
+    let dsh_home = resolve_dsh_home(home);
+    let profile_directory = dsh_home.join("profiles").join(DSH_PROFILE_NAME);
+    fs::create_dir_all(&dsh_home)?;
+    let inherited_path = std::env::var_os("PATH");
+    let executable_path = managed_runtime_path(&runtime, shell_env, inherited_path.as_deref());
 
-    let mut command = Command::new(node);
+    let mut command = Command::new(&runtime.node);
     command
-        .arg(bin)
-        .args(["--profile", "web"])
+        .arg(&runtime.dsh_entry)
+        .args(["--profile", DSH_PROFILE_NAME])
         .arg("--patch")
-        .arg(patch)
+        .arg(&runtime.patch)
         .args(["--port", "0"])
+        .env("PATH", executable_path)
+        .env("DSH_HOME", &dsh_home)
         .env("DSH_TELEMETRY_DISABLED", "1")
+        .env("OPENHARNESS_MANAGED_RUNTIME", "1")
+        .env(
+            "OPENHARNESS_MANAGED_RUNTIME_PROTOCOL",
+            MANAGED_RUNTIME_PROTOCOL_VERSION,
+        )
+        .env("OPENHARNESS_PROFILE_NAME", DSH_PROFILE_NAME)
+        .env("OPENHARNESS_PROFILE_DIRECTORY", &profile_directory)
+        .env("OPENHARNESS_RUNTIME_ROOT", &runtime.root)
+        .env("OPENHARNESS_NODE_PATH", &runtime.node)
+        .env("OPENHARNESS_DSH_ENTRY", &runtime.dsh_entry)
+        .env(
+            "OPENHARNESS_PACKAGE_MANAGER_BIN",
+            &runtime.package_manager_bin,
+        )
+        .env(
+            "OPENHARNESS_RESTART_EXIT_CODE",
+            MANAGED_RESTART_EXIT_CODE.to_string(),
+        )
         .current_dir(home)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let inherited_path = std::env::var_os("PATH");
     for (key, value) in shell_env {
-        if key == "PATH" {
-            command.env(key, merge_path_values(value, inherited_path.as_deref()));
-        } else if std::env::var_os(key).is_none_or(|value| value.is_empty()) {
+        if key != "PATH" && std::env::var_os(key).is_none_or(|value| value.is_empty()) {
             command.env(key, value);
         }
     }
+    #[cfg(unix)]
+    command.process_group(0);
     let mut child = command
         .spawn()
         .map_err(|e| std::io::Error::other(format!("failed to spawn dsh: {e}")))?;
@@ -544,8 +629,7 @@ fn spawn_harness(
     match wait_for_startup_url(&output_rx, STARTUP_TIMEOUT) {
         Ok(url) => Ok((child, url)),
         Err(error) => {
-            let _ = child.kill();
-            let _ = child.wait();
+            terminate_command(&mut child);
             Err(error.into())
         }
     }
@@ -585,6 +669,12 @@ fn backend_supervisor(
 
                 if state.quitting.load(Ordering::SeqCst) {
                     break;
+                }
+                if matches!(&exit_status, Ok(status) if is_managed_restart_code(status.code())) {
+                    failures = 0;
+                    error_reported = false;
+                    eprintln!("[harness] managed runtime requested a backend restart");
+                    continue;
                 }
                 if let Some(update_state) = app.try_state::<AppUpdateState>() {
                     let ui = update_state.ui.clone();
@@ -1082,7 +1172,13 @@ fn installed_build_number(app: &AppHandle) -> Result<String, String> {
 
 #[cfg(unix)]
 fn terminate_backend_process(pid: u32) {
-    unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+    unsafe {
+        libc::kill(-(pid as i32), libc::SIGTERM);
+    }
+    std::thread::sleep(Duration::from_millis(250));
+    unsafe {
+        libc::kill(-(pid as i32), libc::SIGKILL);
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -1761,14 +1857,46 @@ INVALID-KEY=value\0";
     }
 
     #[test]
-    fn shell_path_precedes_and_deduplicates_inherited_path() {
+    fn managed_runtime_path_precedes_user_paths_and_deduplicates() {
+        let runtime = RuntimePaths {
+            root: PathBuf::from("/app/runtime"),
+            node: PathBuf::from("/app/runtime/node"),
+            dsh_entry: PathBuf::from("/app/runtime/dsh/bin.js"),
+            patch: PathBuf::from("/app/runtime/dsh/openharness.patch.yml"),
+            package_manager_bin: PathBuf::from("/app/runtime/dsh/openharness-bin"),
+        };
+        let shell_env = vec![(
+            "PATH".to_string(),
+            std::env::join_paths(["/usr/bin", "/app/runtime"])
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+        )];
+        let inherited = std::env::join_paths(["/bin", "/usr/bin"]).unwrap();
+
+        let paths = std::env::split_paths(&managed_runtime_path(
+            &runtime,
+            &shell_env,
+            Some(&inherited),
+        ))
+        .collect::<Vec<_>>();
+
+        assert_eq!(paths[0], runtime.package_manager_bin);
+        assert_eq!(paths[1], runtime.root);
         assert_eq!(
-            merge_path_values(
-                "/opt/homebrew/bin:/usr/bin",
-                Some(OsStr::new("/usr/bin:/bin:/usr/sbin"))
-            ),
-            OsString::from("/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin")
+            paths
+                .iter()
+                .filter(|path| *path == Path::new("/usr/bin"))
+                .count(),
+            1
         );
+    }
+
+    #[test]
+    fn recognizes_only_the_managed_restart_exit_code() {
+        assert!(is_managed_restart_code(Some(MANAGED_RESTART_EXIT_CODE)));
+        assert!(!is_managed_restart_code(Some(0)));
+        assert!(!is_managed_restart_code(None));
     }
 
     #[test]

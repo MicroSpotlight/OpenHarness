@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   incompatibleNativeArtifactPaths,
   nativePackagePaths,
+  requiredPortableRuntimeFiles,
   resolveRuntimeTarget,
 } from "./setup-runtime.mjs";
 
@@ -49,4 +50,21 @@ test("requires the target-specific node-pty prebuild on every platform", () => {
       nativePackagePaths(target).includes(`node-pty/prebuilds/${target.os}-${target.cpu}`),
     );
   }
+});
+
+test("requires the plugin discovery and package manager runtime files", () => {
+  assert.deepEqual(requiredPortableRuntimeFiles(), [
+    "openharness-bin/pnpm",
+    "openharness-bin/pnpm.cmd",
+    "node_modules/pnpm/bin/pnpm.cjs",
+    "node_modules/pnpm/bin/pnpm.mjs",
+    "node_modules/pnpm/dist/pnpm.mjs",
+    "node_modules/@openharness/native-bridge/lib/index.js",
+    "node_modules/@openharness/native-bridge/lib/index.d.ts",
+    "node_modules/@openharness/native-bridge/lib/managed-runtime.js",
+    "node_modules/@openharness/native-bridge/lib/managed-runtime.d.ts",
+    "node_modules/@microspotlight/openharness-find-plugin/lib/index.js",
+    "node_modules/@microspotlight/openharness-find-plugin/lib/client.js",
+    "node_modules/@microspotlight/openharness-find-plugin/cordis.patch.yml",
+  ]);
 });

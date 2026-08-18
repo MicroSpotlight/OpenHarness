@@ -129,6 +129,7 @@ async function runtimeManifestHash(target, bunVersion) {
     join(MANIFEST_DIR, "bun.lock"),
     join(MANIFEST_DIR, "openharness.patch.yml"),
     join(MANIFEST_DIR, "native-bridge"),
+    join(MANIFEST_DIR, "pnpm-launcher"),
     join(PROJECT_ROOT, "scripts", "brand-runtime.mjs"),
     join(PROJECT_ROOT, "assets", "openharness-icon.png"),
   ];
@@ -224,6 +225,23 @@ export function incompatibleNativeArtifactPaths(target) {
   ];
 }
 
+export function requiredPortableRuntimeFiles() {
+  return [
+    "openharness-bin/pnpm",
+    "openharness-bin/pnpm.cmd",
+    "node_modules/pnpm/bin/pnpm.cjs",
+    "node_modules/pnpm/bin/pnpm.mjs",
+    "node_modules/pnpm/dist/pnpm.mjs",
+    "node_modules/@openharness/native-bridge/lib/index.js",
+    "node_modules/@openharness/native-bridge/lib/index.d.ts",
+    "node_modules/@openharness/native-bridge/lib/managed-runtime.js",
+    "node_modules/@openharness/native-bridge/lib/managed-runtime.d.ts",
+    "node_modules/@microspotlight/openharness-find-plugin/lib/index.js",
+    "node_modules/@microspotlight/openharness-find-plugin/lib/client.js",
+    "node_modules/@microspotlight/openharness-find-plugin/cordis.patch.yml",
+  ];
+}
+
 async function filterRuntimeForTarget(target) {
   // Bun filters optional dependencies by OS and CPU, but not by Linux libc.
   for (const packagePath of incompatibleNativeArtifactPaths(target)) {
@@ -232,6 +250,13 @@ async function filterRuntimeForTarget(target) {
 }
 
 async function verifyRuntime(target, nodePath) {
+  for (const file of requiredPortableRuntimeFiles()) {
+    const absolute = join(DSH_DIR, file);
+    if (!(await fileExists(absolute))) {
+      throw new Error(`Bundled runtime file is missing: ${file}`);
+    }
+  }
+
   for (const packagePath of nativePackagePaths(target)) {
     const absolute = join(DSH_DIR, "node_modules", packagePath);
     if (!(await directoryExists(absolute)) || (await collectFiles(absolute)).length === 0) {
@@ -239,10 +264,32 @@ async function verifyRuntime(target, nodePath) {
     }
   }
 
+  const dshManifestPath = join(
+    DSH_DIR,
+    "node_modules",
+    "@deepseek-ai",
+    "dsh",
+    "package.json",
+  );
+  const dshManifest = JSON.parse(await readFile(dshManifestPath, "utf8"));
+  if (dshManifest.dependencies?.["@microspotlight/openharness-find-plugin"] !== "0.1.0") {
+    throw new Error("Bundled Find Plugin is missing from the DSH installation dependency closure");
+  }
+  if (dshManifest.dependencies?.["@openharness/native-bridge"] !== "0.1.0") {
+    throw new Error("Bundled native bridge is missing from the DSH installation dependency closure");
+  }
   if (target.os === process.platform && target.cpu === process.arch) {
     const version = run(nodePath, ["--version"], { capture: true });
     if (version !== NODE_VERSION) throw new Error(`Expected Node ${NODE_VERSION}, got ${version}`);
     run(nodePath, ["-e", "require('node-pty'); require('sharp'); require('koffi')"], { cwd: DSH_DIR });
+    const pnpmVersion = run(
+      nodePath,
+      [join(DSH_DIR, "openharness-bin", "pnpm"), "--version"],
+      { capture: true },
+    );
+    if (pnpmVersion !== "11.19.0") throw new Error(`Expected pnpm 11.19.0, got ${pnpmVersion}`);
+    run(nodePath, ["-e", "import('@openharness/native-bridge')"], { cwd: DSH_DIR });
+    run(nodePath, ["-e", "import('@microspotlight/openharness-find-plugin')"], { cwd: DSH_DIR });
   } else {
     console.log(`>> Skipping execution of ${target.key} native modules on ${process.platform}-${process.arch}`);
   }
@@ -255,6 +302,8 @@ async function assembleDsh(target) {
   await copyFile(join(MANIFEST_DIR, "bun.lock"), join(DSH_DIR, "bun.lock"));
   await copyFile(join(MANIFEST_DIR, "openharness.patch.yml"), join(DSH_DIR, "openharness.patch.yml"));
   await cp(join(MANIFEST_DIR, "native-bridge"), join(DSH_DIR, "native-bridge"), { recursive: true });
+  await cp(join(MANIFEST_DIR, "pnpm-launcher"), join(DSH_DIR, "openharness-bin"), { recursive: true });
+  if (target.os !== "win32") await chmod(join(DSH_DIR, "openharness-bin", "pnpm"), 0o755);
   console.log(`>> Installing DSH runtime for ${target.key}`);
   run("bun", [
     "install",

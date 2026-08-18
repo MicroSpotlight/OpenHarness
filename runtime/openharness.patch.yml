@@ -1,3 +1,5 @@
 - insert:
     - id: openharness-native-bridge
       name: '@openharness/native-bridge'
+    - id: openharness-find-plugin
+      name: '@microspotlight/openharness-find-plugin'

@@ -71,6 +71,10 @@ fn compile_native_context_menu(manifest_dir: &Path) {
 fn main() {
     let manifest_dir =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is unavailable"));
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest_dir.join("runtime").display()
+    );
     generate_credits(&manifest_dir);
     #[cfg(target_os = "macos")]
     compile_native_context_menu(&manifest_dir);

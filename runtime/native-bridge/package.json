@@ -4,10 +4,21 @@
   "private": true,
   "type": "module",
   "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
   "exports": {
-    ".": "./lib/index.js",
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
     "./client": "./lib/client.js",
+    "./managed-runtime": {
+      "types": "./lib/managed-runtime.d.ts",
+      "default": "./lib/managed-runtime.js"
+    },
     "./package.json": "./package.json"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
   },
   "dsh": {
     "client": {
