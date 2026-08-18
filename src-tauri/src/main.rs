@@ -53,6 +53,7 @@ const SHELL_ENV_OUTPUT_LIMIT: usize = 1024 * 1024;
 const MANAGED_RUNTIME_PROTOCOL_VERSION: &str = "1";
 const MANAGED_RESTART_EXIT_CODE: i32 = 75;
 const DSH_PROFILE_NAME: &str = "web";
+const FIND_PLUGIN_PACKAGE: &str = "@microspotlight/openharness-find-plugin";
 const UPDATE_NOTES_LIMIT: usize = 1_200;
 const APP_UPDATE_MENU_ID: &str = "app-update";
 const SESSION_MENU_LABEL_LIMIT: usize = 96;
@@ -272,6 +273,7 @@ struct RuntimePaths {
     node: PathBuf,
     dsh_entry: PathBuf,
     patch: PathBuf,
+    find_plugin_patch: PathBuf,
     package_manager_bin: PathBuf,
 }
 
@@ -295,18 +297,25 @@ fn resolve_runtime(resource_dir: &Path) -> Result<RuntimePaths, String> {
             .join("lib")
             .join("bin.js");
         let patch = base.join("dsh").join("openharness.patch.yml");
+        let find_plugin_patch = base.join("dsh").join("openharness-find.patch.yml");
         let package_manager_bin = base.join("dsh").join("openharness-bin");
         let package_manager = package_manager_bin.join(if cfg!(target_os = "windows") {
             "pnpm.cmd"
         } else {
             "pnpm"
         });
-        if node.exists() && bin.exists() && patch.exists() && package_manager.exists() {
+        if node.exists()
+            && bin.exists()
+            && patch.exists()
+            && find_plugin_patch.exists()
+            && package_manager.exists()
+        {
             return Ok(RuntimePaths {
                 root: base,
                 node,
                 dsh_entry: bin,
                 patch,
+                find_plugin_patch,
                 package_manager_bin,
             });
         }
@@ -490,12 +499,36 @@ fn resolve_dsh_home(home: &Path) -> PathBuf {
         .unwrap_or_else(|| home.join(".dsh"))
 }
 
+fn manifest_declares_bundle(manifest: &serde_json::Value, bundle: &str) -> bool {
+    manifest
+        .pointer("/dsh/profile/bundles")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|bundles| bundles.iter().any(|value| value.as_str() == Some(bundle)))
+}
+
+fn profile_declares_bundle(profile_directory: &Path, bundle: &str) -> bool {
+    fs::read(profile_directory.join("package.json"))
+        .ok()
+        .and_then(|content| serde_json::from_slice(&content).ok())
+        .is_some_and(|manifest| manifest_declares_bundle(&manifest, bundle))
+}
+
 /// Read PATH and DeepSeek variables from the user's login shell. Finder does
 /// not inherit the login environment, so desktop launches otherwise miss user
 /// tools and credentials. Values are bounded and never logged.
 #[cfg(unix)]
+fn resolve_login_shell(configured: Option<&OsStr>) -> PathBuf {
+    configured
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute() && path.is_file())
+        .unwrap_or_else(|| PathBuf::from("/bin/sh"))
+}
+
+#[cfg(unix)]
 fn load_shell_env() -> Result<Vec<(String, String)>, std::io::Error> {
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    let configured_shell = std::env::var_os("SHELL");
+    let shell = resolve_login_shell(configured_shell.as_deref());
     let output = command_stdout_with_timeout(
         Command::new(&shell).args(["-lic", "printf '\\0'; exec /usr/bin/env -0"]),
         SHELL_ENV_TIMEOUT,
@@ -544,13 +577,18 @@ fn spawn_harness(
     fs::create_dir_all(&dsh_home)?;
     let inherited_path = std::env::var_os("PATH");
     let executable_path = managed_runtime_path(&runtime, shell_env, inherited_path.as_deref());
+    let profile_has_find_plugin = profile_declares_bundle(&profile_directory, FIND_PLUGIN_PACKAGE);
 
     let mut command = Command::new(&runtime.node);
     command
         .arg(&runtime.dsh_entry)
         .args(["--profile", DSH_PROFILE_NAME])
         .arg("--patch")
-        .arg(&runtime.patch)
+        .arg(&runtime.patch);
+    if !profile_has_find_plugin {
+        command.arg("--patch").arg(&runtime.find_plugin_patch);
+    }
+    command
         .args(["--port", "0"])
         .env("PATH", executable_path)
         .env("DSH_HOME", &dsh_home)
@@ -1856,6 +1894,24 @@ INVALID-KEY=value\0";
         assert!(parse_shell_env(b"PATH=/unmarked/bin\0").is_empty());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn login_shell_uses_configured_absolute_file_or_portable_fallback() {
+        assert_eq!(
+            resolve_login_shell(Some(OsStr::new("/bin/sh"))),
+            PathBuf::from("/bin/sh")
+        );
+        assert_eq!(resolve_login_shell(None), PathBuf::from("/bin/sh"));
+        assert_eq!(
+            resolve_login_shell(Some(OsStr::new("relative-shell"))),
+            PathBuf::from("/bin/sh")
+        );
+        assert_eq!(
+            resolve_login_shell(Some(OsStr::new("/definitely/missing/shell"))),
+            PathBuf::from("/bin/sh")
+        );
+    }
+
     #[test]
     fn managed_runtime_path_precedes_user_paths_and_deduplicates() {
         let runtime = RuntimePaths {
@@ -1863,6 +1919,7 @@ INVALID-KEY=value\0";
             node: PathBuf::from("/app/runtime/node"),
             dsh_entry: PathBuf::from("/app/runtime/dsh/bin.js"),
             patch: PathBuf::from("/app/runtime/dsh/openharness.patch.yml"),
+            find_plugin_patch: PathBuf::from("/app/runtime/dsh/openharness-find.patch.yml"),
             package_manager_bin: PathBuf::from("/app/runtime/dsh/openharness-bin"),
         };
         let shell_env = vec![(
@@ -1897,6 +1954,30 @@ INVALID-KEY=value\0";
         assert!(is_managed_restart_code(Some(MANAGED_RESTART_EXIT_CODE)));
         assert!(!is_managed_restart_code(Some(0)));
         assert!(!is_managed_restart_code(None));
+    }
+
+    #[test]
+    fn detects_find_plugin_in_an_existing_profile_bundle_list() {
+        let manifest = serde_json::json!({
+            "dependencies": {
+                FIND_PLUGIN_PACKAGE: "github:MicroSpotlight/openharness-find-plugin"
+            },
+            "dsh": {
+                "profile": {
+                    "bundles": ["@deepseek-ai/dsh-base", FIND_PLUGIN_PACKAGE]
+                }
+            }
+        });
+
+        assert!(manifest_declares_bundle(&manifest, FIND_PLUGIN_PACKAGE));
+        assert!(!manifest_declares_bundle(
+            &manifest,
+            "@openharness/native-bridge"
+        ));
+        assert!(!manifest_declares_bundle(
+            &serde_json::json!({ "dependencies": { FIND_PLUGIN_PACKAGE: "0.1.0" } }),
+            FIND_PLUGIN_PACKAGE
+        ));
     }
 
     #[test]

@@ -54,6 +54,8 @@ test("requires the target-specific node-pty prebuild on every platform", () => {
 
 test("requires the plugin discovery and package manager runtime files", () => {
   assert.deepEqual(requiredPortableRuntimeFiles(), [
+    "openharness.patch.yml",
+    "openharness-find.patch.yml",
     "openharness-bin/pnpm",
     "openharness-bin/pnpm.cmd",
     "node_modules/pnpm/bin/pnpm.cjs",

@@ -128,6 +128,7 @@ async function runtimeManifestHash(target, bunVersion) {
     join(MANIFEST_DIR, "package.json"),
     join(MANIFEST_DIR, "bun.lock"),
     join(MANIFEST_DIR, "openharness.patch.yml"),
+    join(MANIFEST_DIR, "openharness-find.patch.yml"),
     join(MANIFEST_DIR, "native-bridge"),
     join(MANIFEST_DIR, "pnpm-launcher"),
     join(PROJECT_ROOT, "scripts", "brand-runtime.mjs"),
@@ -227,6 +228,8 @@ export function incompatibleNativeArtifactPaths(target) {
 
 export function requiredPortableRuntimeFiles() {
   return [
+    "openharness.patch.yml",
+    "openharness-find.patch.yml",
     "openharness-bin/pnpm",
     "openharness-bin/pnpm.cmd",
     "node_modules/pnpm/bin/pnpm.cjs",
@@ -301,6 +304,10 @@ async function assembleDsh(target) {
   await copyFile(join(MANIFEST_DIR, "package.json"), join(DSH_DIR, "package.json"));
   await copyFile(join(MANIFEST_DIR, "bun.lock"), join(DSH_DIR, "bun.lock"));
   await copyFile(join(MANIFEST_DIR, "openharness.patch.yml"), join(DSH_DIR, "openharness.patch.yml"));
+  await copyFile(
+    join(MANIFEST_DIR, "openharness-find.patch.yml"),
+    join(DSH_DIR, "openharness-find.patch.yml"),
+  );
   await cp(join(MANIFEST_DIR, "native-bridge"), join(DSH_DIR, "native-bridge"), { recursive: true });
   await cp(join(MANIFEST_DIR, "pnpm-launcher"), join(DSH_DIR, "openharness-bin"), { recursive: true });
   if (target.os !== "win32") await chmod(join(DSH_DIR, "openharness-bin", "pnpm"), 0o755);
