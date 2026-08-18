@@ -23,6 +23,13 @@ assets or imply endorsement by or affiliation with DeepSeek.
 - Native installers for macOS, Windows, and Linux on arm64 and x64
 - Automatic loopback port selection to avoid conflicts
 - Shared configuration, credentials, sessions, and plugins in `~/.dsh`
+- Built-in plugin discovery under **Settings → Plugins**, with catalog search,
+  category filters, installed-state detection, and upgrade availability
+- In-app plugin installation and upgrades pinned to an exact package version or
+  Git commit, with cancellation, rollback, post-install verification, and
+  managed restart when activation requires it
+- Bundled pnpm execution environment; plugin management does not depend on a
+  system Node.js or pnpm installation
 - Runtime telemetry disabled by the desktop launcher
 - Live system-tray session menu: five prioritized tasks, 20 more recent
   sessions, and a link to the complete list in Harness
@@ -89,14 +96,50 @@ Existing credentials, configuration, sessions, and plugins are therefore
 available to both interfaces. Harness-specific usage is documented in the
 upstream [user guide](https://github.com/deepseek-ai/deepseek-harness/tree/master/docs/user/guide).
 
+## Plugins
+
+Open **Settings → Plugins → Discover** to search the OpenHarness plugin catalog,
+filter by category or capability, inspect publisher and compatibility details,
+and install or upgrade a plugin without leaving the app. OpenHarness reports
+installed, upgrade-available, newer-installed, conflict, and restart-required
+states instead of guessing from a display name.
+
+Plugin changes are performed against the `web` profile under `~/.dsh`. The
+browser submits only a plugin name, action, catalog version, and catalog
+revision. The bundled Find Plugin Host reloads and validates the catalog,
+derives an exact npm version or Git commit, snapshots the profile, runs the
+operation, verifies the installed package, and rolls metadata back if the
+operation fails. Operations can be cancelled and are restored in the UI after
+a page refresh.
+
+OpenHarness does not implement catalog or installation policy in Rust. The
+desktop app exposes a Cordis managed-runtime service backed by its bundled
+Node.js, DSH, and pnpm environment. That service provides bounded output,
+timeouts, one active package operation, full process-tree cancellation, and a
+supervisor-managed backend restart. The Find Plugin owns catalog trust,
+installation intent, installed-state matching, rollback, and activation.
+
+Browse the read-only
+[OpenHarness Plugin Marketplace](https://microspotlight.github.io/openharness-plugins/)
+to search the public catalog. Installation and upgrades remain in the app. The
+catalog and discovery components are maintained in the
+[`openharness-plugins`](https://github.com/MicroSpotlight/openharness-plugins)
+and
+[`openharness-find-plugin`](https://github.com/MicroSpotlight/openharness-find-plugin)
+repositories.
+
 ## How It Works
 
 1. Tauri launches the bundled Node.js executable and the published
-   `@deepseek-ai/dsh` package with the bundled OpenHarness bridge patch and an
-   automatically selected port.
+   `@deepseek-ai/dsh` package with the OpenHarness Native Bridge, Find Plugin,
+   and an automatically selected port.
 2. The runtime selects an available local port and reports its loopback URL.
 3. OpenHarness validates that URL and opens it in a native webview.
-4. Closing the window hides it to the system tray. Quitting from the app menu
+4. The Native Bridge registers the managed plugin runtime for the current
+   `web` profile and gives package operations the bundled pnpm environment.
+5. A plugin-requested restart exits the DSH child with the managed restart code;
+   the OpenHarness supervisor immediately starts a fresh backend generation.
+6. Closing the window hides it to the system tray. Quitting from the app menu
    or tray terminates the bundled runtime process.
 
 The desktop host does not fork or reimplement the upstream Web UI. The runtime
@@ -142,7 +185,7 @@ bun run dev
 |-- .github/workflows/     Cross-platform release and Pages automation
 |-- assets/                OpenHarness icon source
 |-- frontend/dist/         Tauri bootstrap page
-|-- runtime/               Locked bundled-runtime manifest
+|-- runtime/               Locked runtime, Native Bridge, Find Plugin, and pnpm launcher
 |-- scripts/               Runtime assembly, branding, release, and signing helpers
 `-- src-tauri/             Rust host and Tauri configuration
 ```
@@ -168,8 +211,10 @@ project and its brand.
 
 ## Contributing
 
-Changes to the runtime or its Web UI should be contributed upstream. Issues and
-pull requests for the OpenHarness desktop host are welcome in this repository.
+Changes to the upstream runtime or its Web UI should be contributed upstream.
+Catalog entries belong in `openharness-plugins`, discovery and installation
+orchestration belong in `openharness-find-plugin`, and desktop managed-runtime
+or supervisor changes belong in this repository.
 
 ## Copyright and Licenses
 

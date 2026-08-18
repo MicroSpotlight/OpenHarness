@@ -19,6 +19,10 @@ OpenHarness 由 MicroSpotlight 独立开发。为避免与 DeepSeek 品牌产生
 - 为 macOS、Windows 和 Linux 提供 arm64/x64 原生安装包
 - 自动选择本机回环端口，避免端口冲突
 - 与上游工具共用 `~/.dsh` 中的配置、凭据、会话和插件
+- 在 **设置 → 插件** 中内置插件发现，支持目录搜索、分类筛选、已安装识别和可升级判断
+- 在 App 内安装或升级插件，目标固定到精确包版本或 Git commit，并支持取消、失败回滚、
+  安装后验证以及需要激活时的受管重启
+- 内置 pnpm 执行环境，插件管理不依赖系统安装的 Node.js 或 pnpm
 - 桌面启动器默认关闭内置运行时的遥测
 - 系统托盘常驻：顶层展示 5 个优先会话，「更多会话」展示 20 个最近会话并可查看全部
 - 单实例锁：重复启动会聚焦已运行实例
@@ -80,13 +84,40 @@ OpenHarness 会在可用的本机回环端口上启动内置 Agent 服务，并�
 入口之间直接复用。Harness 本身的使用方式请参考上游
 [用户指南](https://github.com/deepseek-ai/deepseek-harness/tree/master/docs/user/guide)。
 
+## 插件
+
+打开 **设置 → 插件 → 发现插件**，可以搜索 OpenHarness 插件目录，按分类或能力筛选，
+查看发布者和兼容性信息，并在不离开 App 的情况下安装或升级插件。OpenHarness 会严格展示
+已安装、可升级、本地版本更新、身份冲突和需要重启等状态，不根据显示名称进行模糊猜测。
+
+插件变更写入 `~/.dsh` 下的 `web` profile。浏览器只提交插件名称、操作、目录版本和
+Catalog revision；内置 Find Plugin Host 会重新读取并校验目录，推导精确 npm 版本或 Git
+commit，快照 profile，执行变更，验证实际安装结果，并在失败时恢复元数据。操作可以取消，
+刷新页面后也能恢复当前进度。
+
+OpenHarness 不在 Rust 中实现目录或安装策略。桌面 App 通过 Cordis 提供受管运行时服务，
+底层使用随应用打包的 Node.js、DSH 和 pnpm，并负责输出上限、超时、单一包操作互斥、
+完整进程树取消和 Supervisor 受管重启。目录信任、安装意图、已安装身份匹配、回滚和激活
+仍由 Find Plugin 负责。
+
+可以在只读的
+[OpenHarness 插件市场](https://microspotlight.github.io/openharness-plugins/)
+中搜索公共目录；安装和升级仍需在 App 内完成。插件目录和发现组件分别维护在
+[`openharness-plugins`](https://github.com/MicroSpotlight/openharness-plugins) 与
+[`openharness-find-plugin`](https://github.com/MicroSpotlight/openharness-find-plugin)
+仓库。
+
 ## 工作原理
 
-1. Tauri 使用内置 Node.js、已发布的 `@deepseek-ai/dsh` 包和随应用打包的
-   OpenHarness 桥接补丁启动服务，并自动选择端口。
+1. Tauri 使用内置 Node.js 和已发布的 `@deepseek-ai/dsh` 包启动服务，同时加载
+   OpenHarness Native Bridge 与 Find Plugin，并自动选择端口。
 2. 运行时自动选择可用的本机端口，并输出对应的回环地址。
 3. OpenHarness 校验该地址后，在原生 webview 中打开它。
-4. 关闭窗口时将其隐藏到系统托盘；从应用菜单或托盘选择「退出」时，终止内置运行时进程。
+4. Native Bridge 为当前 `web` profile 注册受管插件运行时，并向包操作提供内置 pnpm
+   环境。
+5. 插件请求重启时，DSH 子进程使用受管退出码退出，OpenHarness Supervisor 立即启动新的
+   后端 generation。
+6. 关闭窗口时将其隐藏到系统托盘；从应用菜单或托盘选择「退出」时，终止内置运行时进程。
 
 桌面宿主不会复刻或重新实现上游 Web UI。运行时由
 [`scripts/setup-runtime.mjs`](scripts/setup-runtime.mjs) 按锁文件组装，再通过
@@ -130,7 +161,7 @@ bun run dev
 |-- .github/workflows/     跨平台发版与 Pages 自动化
 |-- assets/                OpenHarness 图标源文件
 |-- frontend/dist/         Tauri 启动占位页
-|-- runtime/               锁定的内置运行时清单
+|-- runtime/               锁定运行时、Native Bridge、Find Plugin 与 pnpm launcher
 |-- scripts/               运行时组装、品牌、发版与签名脚本
 `-- src-tauri/             Rust 宿主与 Tauri 配置
 ```
@@ -151,8 +182,9 @@ OpenHarness 内置的上游运行时组件。该上游组件单独采用 MIT Lic
 
 ## 参与贡献
 
-涉及运行时或 Web UI 的改动应提交到上游仓库；OpenHarness 桌面宿主相关的 Issue 和
-Pull Request 欢迎提交到本仓库。
+上游运行时或 Web UI 的改动应提交到上游仓库；插件目录条目属于
+`openharness-plugins`，发现和安装编排属于 `openharness-find-plugin`，桌面受管运行时与
+Supervisor 改动属于本仓库。
 
 ## 版权与许可证
 

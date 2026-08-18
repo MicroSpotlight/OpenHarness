@@ -5,14 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta
       name="description"
-      content="OpenHarness 是由 MicroSpotlight 独立开发的跨平台 AI Agent 桌面应用，支持 macOS、Windows 和 Linux，内置开源 DeepSeek Harness 运行环境。"
+      content="OpenHarness 是由 MicroSpotlight 独立开发的跨平台 AI Agent 桌面应用，内置 DeepSeek Harness 运行环境与可搜索、安装和更新的插件系统。"
     >
     <meta name="theme-color" content="#f4f6f8">
     <meta property="og:type" content="website">
     <meta property="og:title" content="OpenHarness">
     <meta
       property="og:description"
-      content="在 macOS、Windows 或 Linux 桌面启动完整、可组合、可追溯的 AI Agent 工作空间。"
+      content="在 macOS、Windows 或 Linux 桌面启动完整、可组合、可扩展的 AI Agent 工作空间，并直接发现、安装和更新插件。"
     >
     <meta
       property="og:image"
@@ -22,7 +22,7 @@
     <link rel="canonical" href="https://openharness.microspotlight.team/">
     <link rel="icon" type="image/png" href="assets/app-icon.png">
     <link rel="apple-touch-icon" href="assets/app-icon.png">
-    <link rel="stylesheet" href="styles.css?v=20260817-8">
+    <link rel="stylesheet" href="styles.css?v=20260818-1">
     <title>OpenHarness</title>
   </head>
   <body>
@@ -37,6 +37,15 @@
 
         <nav class="desktop-nav" aria-label="主导航" data-i18n-aria="navLabel">
           <a href="#experience" data-i18n="navExperience">桌面体验</a>
+          <a
+            class="marketplace-nav-link"
+            href="https://microspotlight.github.io/openharness-plugins/"
+            target="_blank"
+            rel="noreferrer"
+          >
+            <span data-i18n="navPlugins">插件市场</span>
+            <i data-lucide="arrow-up-right" aria-hidden="true"></i>
+          </a>
           <a href="#capabilities" data-i18n="navCapabilities">能力</a>
           <a href="#how-it-works" data-i18n="navHow">运行方式</a>
           <a href="#faq" data-i18n="navFaq">常见问题</a>
@@ -74,6 +83,15 @@
 
       <nav class="mobile-nav" id="mobile-menu" data-mobile-menu aria-label="移动端导航" data-i18n-aria="mobileNavLabel">
         <a href="#experience" data-i18n="navExperience">桌面体验</a>
+        <a
+          class="marketplace-nav-link"
+          href="https://microspotlight.github.io/openharness-plugins/"
+          target="_blank"
+          rel="noreferrer"
+        >
+          <span data-i18n="navPlugins">插件市场</span>
+          <i data-lucide="arrow-up-right" aria-hidden="true"></i>
+        </a>
         <a href="#capabilities" data-i18n="navCapabilities">能力</a>
         <a href="#how-it-works" data-i18n="navHow">运行方式</a>
         <a href="#faq" data-i18n="navFaq">常见问题</a>
@@ -140,7 +158,7 @@
           <div>
             <i data-lucide="blocks" aria-hidden="true"></i>
             <span class="fact-label" data-i18n="factHarness">完整 Harness</span>
-            <span class="fact-value" data-i18n="factHarnessValue">插件能力保持不变</span>
+            <span class="fact-value" data-i18n="factHarnessValue">发现、安装与更新插件</span>
           </div>
         </div>
       </section>
@@ -341,6 +359,101 @@
         </div>
       </section>
 
+      <section class="plugin-section" id="plugins">
+        <div class="section-shell">
+          <div class="section-heading plugin-heading">
+            <div>
+              <p class="section-kicker" data-i18n="pluginsKicker">插件系统</p>
+              <h2 data-i18n="pluginsTitle">从发现到激活，都在 App 里完成。</h2>
+            </div>
+            <div class="plugin-heading-copy">
+              <p data-i18n="pluginsBody">
+                在“设置 → 插件 → 发现插件”中搜索目录、查看兼容性和发布者信息，并安装或升级到目录锁定的精确版本。
+              </p>
+              <a
+                class="text-link plugin-catalog-link"
+                href="https://microspotlight.github.io/openharness-plugins/"
+                target="_blank"
+                rel="noreferrer"
+              >
+                <span data-i18n="pluginsCatalogLink">打开 OpenHarness 插件市场</span>
+                <i data-lucide="arrow-up-right" aria-hidden="true"></i>
+              </a>
+            </div>
+          </div>
+
+          <div class="plugin-system-grid">
+            <div class="plugin-console" role="group" aria-label="受管插件流程" data-i18n-aria="pluginsFlowLabel">
+              <div class="plugin-console-head">
+                <span data-i18n="pluginsConsoleTitle">PLUGIN OPERATION</span>
+                <span class="plugin-runtime-status">
+                  <span aria-hidden="true"></span>
+                  <span data-i18n="pluginsManagedStatus">本机受管</span>
+                </span>
+              </div>
+              <ol class="plugin-flow">
+                <li>
+                  <span class="plugin-flow-number">01</span>
+                  <i data-lucide="search" aria-hidden="true"></i>
+                  <div>
+                    <h3 data-i18n="pluginsDiscoverTitle">发现</h3>
+                    <p data-i18n="pluginsDiscoverBody">按名称、分类和能力搜索经过 Schema 校验的插件目录。</p>
+                  </div>
+                </li>
+                <li>
+                  <span class="plugin-flow-number">02</span>
+                  <i data-lucide="badge-check" aria-hidden="true"></i>
+                  <div>
+                    <h3 data-i18n="pluginsVerifyTitle">校验</h3>
+                    <p data-i18n="pluginsVerifyBody">Host 重新校验目录 revision、身份、精确版本或 Git commit。</p>
+                  </div>
+                </li>
+                <li>
+                  <span class="plugin-flow-number">03</span>
+                  <i data-lucide="box" aria-hidden="true"></i>
+                  <div>
+                    <h3 data-i18n="pluginsInstallTitle">安装或升级</h3>
+                    <p data-i18n="pluginsInstallBody">使用 App 内置 Node.js、DSH 与 pnpm 执行，可查看进度并取消。</p>
+                  </div>
+                </li>
+                <li>
+                  <span class="plugin-flow-number">04</span>
+                  <i data-lucide="refresh-cw" aria-hidden="true"></i>
+                  <div>
+                    <h3 data-i18n="pluginsActivateTitle">验证并激活</h3>
+                    <p data-i18n="pluginsActivateBody">验证安装结果；可以热激活时立即生效，否则由 App 受管重启。</p>
+                  </div>
+                </li>
+              </ol>
+            </div>
+
+            <div class="plugin-principles">
+              <article>
+                <i data-lucide="fingerprint" aria-hidden="true"></i>
+                <div>
+                  <h3 data-i18n="pluginsIdentityTitle">精确身份</h3>
+                  <p data-i18n="pluginsIdentityBody">只把严格匹配的包认作已安装，冲突和不确定状态会明确显示。</p>
+                </div>
+              </article>
+              <article>
+                <i data-lucide="shield-check" aria-hidden="true"></i>
+                <div>
+                  <h3 data-i18n="pluginsSafetyTitle">受控执行</h3>
+                  <p data-i18n="pluginsSafetyBody">浏览器不提交命令或安装源，所有变更由本机 Host 根据目录重新推导。</p>
+                </div>
+              </article>
+              <article>
+                <i data-lucide="history" aria-hidden="true"></i>
+                <div>
+                  <h3 data-i18n="pluginsRecoveryTitle">可取消、可恢复</h3>
+                  <p data-i18n="pluginsRecoveryBody">单操作互斥、完整进程树取消、超时限制和失败后的 profile 元数据恢复。</p>
+                </div>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section class="capabilities-section" id="capabilities">
         <div class="section-shell">
           <div class="section-heading">
@@ -481,6 +594,10 @@
               <p data-i18n="faqThreeAnswer">不会创建另一套配置目录。OpenHarness 复用 ~/.dsh，因此已有模型凭据、会话与插件可继续使用。</p>
             </details>
             <details>
+              <summary><span data-i18n="faqPluginQuestion">插件如何安装和更新？</span><i data-lucide="plus" aria-hidden="true"></i></summary>
+              <p data-i18n="faqPluginAnswer">在“设置 → 插件 → 发现插件”中操作。Find Plugin Host 会校验目录并管理安装事务，OpenHarness App 使用内置 Node.js、DSH 和 pnpm 执行变更；不需要系统安装 Node.js 或 pnpm。</p>
+            </details>
+            <details>
               <summary><span data-i18n="faqFourQuestion">目前支持哪些平台？</span><i data-lucide="plus" aria-hidden="true"></i></summary>
               <p data-i18n="faqFourAnswer">OpenHarness 支持 macOS 15.0+、Windows 10+ x64/ARM64，以及 Ubuntu 22.04+、Debian 12+ 等 x64/ARM64 Linux 发行版；Linux 需要 glibc 2.35+ 和 WebKitGTK 4.1。</p>
             </details>
@@ -530,6 +647,6 @@
     </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-    <script src="site.js?v=20260817-4" defer></script>
+    <script src="site.js?v=20260818-1" defer></script>
   </body>
 </html>
