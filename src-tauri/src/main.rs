@@ -564,6 +564,22 @@ fn load_shell_env_or_empty() -> Vec<(String, String)> {
     }
 }
 
+fn configure_harness_args(
+    command: &mut Command,
+    runtime: &RuntimePaths,
+    profile_has_find_plugin: bool,
+) {
+    command
+        .arg(&runtime.dsh_entry)
+        .args(["--profile", DSH_PROFILE_NAME])
+        .arg("--patch")
+        .arg(&runtime.patch);
+    if !profile_has_find_plugin {
+        command.arg("--patch").arg(&runtime.find_plugin_patch);
+    }
+    command.args(["--port", "0", "--no-open"]);
+}
+
 /// Spawn the DSH web server and block until it reports its canonical URL.
 fn spawn_harness(
     resource_dir: &Path,
@@ -580,16 +596,8 @@ fn spawn_harness(
     let profile_has_find_plugin = profile_declares_bundle(&profile_directory, FIND_PLUGIN_PACKAGE);
 
     let mut command = Command::new(&runtime.node);
+    configure_harness_args(&mut command, &runtime, profile_has_find_plugin);
     command
-        .arg(&runtime.dsh_entry)
-        .args(["--profile", DSH_PROFILE_NAME])
-        .arg("--patch")
-        .arg(&runtime.patch);
-    if !profile_has_find_plugin {
-        command.arg("--patch").arg(&runtime.find_plugin_patch);
-    }
-    command
-        .args(["--port", "0"])
         .env("PATH", executable_path)
         .env("DSH_HOME", &dsh_home)
         .env("DSH_TELEMETRY_DISABLED", "1")
@@ -1946,6 +1954,41 @@ INVALID-KEY=value\0";
                 .filter(|path| *path == Path::new("/usr/bin"))
                 .count(),
             1
+        );
+    }
+
+    #[test]
+    fn harness_command_keeps_web_ui_inside_desktop_app() {
+        let runtime = RuntimePaths {
+            root: PathBuf::from("/app/runtime"),
+            node: PathBuf::from("/app/runtime/node"),
+            dsh_entry: PathBuf::from("/app/runtime/dsh/bin.js"),
+            patch: PathBuf::from("/app/runtime/dsh/openharness.patch.yml"),
+            find_plugin_patch: PathBuf::from("/app/runtime/dsh/openharness-find.patch.yml"),
+            package_manager_bin: PathBuf::from("/app/runtime/dsh/openharness-bin"),
+        };
+        let mut command = Command::new(&runtime.node);
+
+        configure_harness_args(&mut command, &runtime, false);
+
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            args,
+            vec![
+                "/app/runtime/dsh/bin.js",
+                "--profile",
+                "web",
+                "--patch",
+                "/app/runtime/dsh/openharness.patch.yml",
+                "--patch",
+                "/app/runtime/dsh/openharness-find.patch.yml",
+                "--port",
+                "0",
+                "--no-open",
+            ]
         );
     }
 
