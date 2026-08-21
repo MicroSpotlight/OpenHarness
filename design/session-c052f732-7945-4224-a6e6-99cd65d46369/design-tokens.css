@@ -1,0 +1,10 @@
+/* ipw-theme:start */
+:root {
+  --ipw-color-bg: #f2f0eb; --ipw-color-surface: #ffffff; --ipw-color-text: #171717;
+  --ipw-color-muted: #66645f; --ipw-color-border: #d7d3ca; --ipw-color-primary: #5b50e6;
+  --ipw-color-secondary: #dcd8ff; --ipw-color-accent: #f26b38; --ipw-font-display: Georgia, serif;
+  --ipw-font-body: Arial, sans-serif; --ipw-content-width: 1180px; --ipw-page-padding: 32px;
+  --ipw-section-space: 96px; --ipw-card-bg: #ffffff; --ipw-card-border: #d7d3ca;
+  --ipw-card-radius: 24px; --ipw-card-shadow: 0 24px 70px rgb(24 20 14 / 10%);
+}
+/* ipw-theme:end */

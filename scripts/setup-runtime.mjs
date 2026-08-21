@@ -281,6 +281,28 @@ async function verifyRuntime(target, nodePath) {
   if (dshManifest.dependencies?.["@openharness/native-bridge"] !== "0.1.0") {
     throw new Error("Bundled native bridge is missing from the DSH installation dependency closure");
   }
+  const findPluginSource = await readFile(
+    join(
+      DSH_DIR,
+      "node_modules",
+      "@microspotlight",
+      "openharness-find-plugin",
+      "lib",
+      "index.js",
+    ),
+    "utf8",
+  );
+  for (const integrationMarker of [
+    '"pnpm-workspace.yaml"',
+    "PROFILE_INCOMPATIBLE: 409",
+    'new HostError("PROFILE_INCOMPATIBLE"',
+    '[result.stderr, result.stdout].filter(Boolean)',
+    "await snapshot.restore();\n\t\tthis.installed.verifyComposition();",
+  ]) {
+    if (!findPluginSource.includes(integrationMarker)) {
+      throw new Error(`Bundled Find Plugin integration patch is missing: ${integrationMarker}`);
+    }
+  }
   if (target.os === process.platform && target.cpu === process.arch) {
     const version = run(nodePath, ["--version"], { capture: true });
     if (version !== NODE_VERSION) throw new Error(`Expected Node ${NODE_VERSION}, got ${version}`);

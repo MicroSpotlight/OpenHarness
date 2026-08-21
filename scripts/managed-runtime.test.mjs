@@ -25,8 +25,16 @@ function temporaryRuntime(t) {
   const profileDirectory = join(dshHome, "profiles", "web");
   const packageManagerBinDirectory = join(runtimeRoot, "dsh", "openharness-bin");
   const dshEntry = join(runtimeRoot, "dsh", "fake-dsh.mjs");
+  const patchPath = join(runtimeRoot, "dsh", "openharness.patch.yml");
+  const findPluginPatchPath = join(runtimeRoot, "dsh", "openharness-find.patch.yml");
   mkdirSync(packageManagerBinDirectory, { recursive: true });
-  mkdirSync(dshHome, { recursive: true });
+  mkdirSync(profileDirectory, { recursive: true });
+  writeFileSync(patchPath, "[]\n");
+  writeFileSync(findPluginPatchPath, "[]\n");
+  writeFileSync(
+    join(profileDirectory, "package.json"),
+    JSON.stringify({ dsh: { profile: { bundles: [] } } }),
+  );
   const launcher = join(
     packageManagerBinDirectory,
     process.platform === "win32" ? "pnpm.cmd" : "pnpm",
@@ -40,7 +48,17 @@ function temporaryRuntime(t) {
       import { writeFileSync } from "node:fs";
 
       const args = process.argv.slice(2);
-      if (args.includes("large-output")) {
+      if (!args.includes("plugin")) {
+        const marker = process.env.OPENHARNESS_TEST_STARTUP_ARGS;
+        if (marker) writeFileSync(marker, JSON.stringify(args));
+        if (process.env.OPENHARNESS_TEST_PROFILE_STARTUP_FAILURE === "1") {
+          process.stderr.write("profile plugin failed during startup");
+          process.exitCode = 1;
+        } else {
+          process.stdout.write("dsh web: http://127.0.0.1:54321\\n");
+          setInterval(() => {}, 1000);
+        }
+      } else if (args.includes("large-output")) {
         process.stdout.write(Buffer.alloc(300 * 1024, 65));
       } else if (args.includes("wait")) {
         const marker = process.env.OPENHARNESS_TEST_DESCENDANT_PID;
@@ -69,6 +87,8 @@ function temporaryRuntime(t) {
     profileDirectory,
     nodePath: process.execPath,
     dshEntry,
+    patchPath,
+    findPluginPatchPath,
     packageManagerBinDirectory,
     packageManagerLauncher: launcher,
     profileName: "web",
@@ -86,6 +106,8 @@ function managedEnvironment(configuration) {
     OPENHARNESS_RUNTIME_ROOT: configuration.runtimeRoot,
     OPENHARNESS_NODE_PATH: join(configuration.runtimeRoot, "node"),
     OPENHARNESS_DSH_ENTRY: configuration.dshEntry,
+    OPENHARNESS_PATCH_PATH: configuration.patchPath,
+    OPENHARNESS_FIND_PLUGIN_PATCH_PATH: configuration.findPluginPatchPath,
     OPENHARNESS_PACKAGE_MANAGER_BIN: configuration.packageManagerBinDirectory,
     OPENHARNESS_RESTART_EXIT_CODE: String(MANAGED_RESTART_EXIT_CODE),
     DSH_HOME: configuration.dshHome,
@@ -133,8 +155,9 @@ test("managed environment is opt-in and validates its path boundaries", (t) => {
 
 test("executor uses fixed DSH and profile arguments with managed PATH first", async (t) => {
   const configuration = temporaryRuntime(t);
+  const startupArgs = join(configuration.root, "startup-args.json");
   const executor = new ManagedRuntimeExecutor(configuration, {
-    environment: { PATH: "/user/bin" },
+    environment: { PATH: "/user/bin", OPENHARNESS_TEST_STARTUP_ARGS: startupArgs },
   });
 
   assert.deepEqual(await executor.probe(), { ready: true });
@@ -160,7 +183,32 @@ test("executor uses fixed DSH and profile arguments with managed PATH first", as
   assert.equal(output.ignoreScripts, "true");
   assert.equal(output.path.split(delimiter)[0], configuration.packageManagerBinDirectory);
   assert.equal(output.pnpmSelfUpdateCheck, "1");
-  assert.deepEqual(progressEvents, [{ phase: "resolving" }]);
+  assert.deepEqual(progressEvents, [{ phase: "resolving" }, { phase: "verifying" }]);
+  assert.deepEqual(JSON.parse(readFileSync(startupArgs, "utf8")), [
+    "--profile",
+    "web",
+    "--patch",
+    configuration.patchPath,
+    "--patch",
+    configuration.findPluginPatchPath,
+    "--port",
+    "0",
+  ]);
+});
+
+test("executor rejects an install whose updated profile cannot start", async (t) => {
+  const configuration = temporaryRuntime(t);
+  const executor = new ManagedRuntimeExecutor(configuration, {
+    environment: { ...process.env, OPENHARNESS_TEST_PROFILE_STARTUP_FAILURE: "1" },
+  });
+
+  const result = await executor.run(
+    ["--profile", "web", "add", "--save-exact", "broken-plugin@1.0.0"],
+    { signal: new AbortController().signal, onProgress: () => {} },
+  );
+
+  assert.equal(result.exitCode, 1);
+  assert.match(result.stderr, /OpenHarness startup check failed: profile plugin failed/);
 });
 
 test("executor rejects unsupported commands and concurrent operations", async (t) => {

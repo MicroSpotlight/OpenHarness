@@ -235,4 +235,59 @@ dshManifest.dependencies["@openharness/native-bridge"] = "0.1.0";
 dshManifest.dependencies["@microspotlight/openharness-find-plugin"] = "0.1.0";
 write("dsh/package.json", `${JSON.stringify(dshManifest, null, 2)}\n`);
 
+// Keep plugin installation transactional until these integration fixes ship in
+// the published Find Plugin package.
+const findPluginPath = "../@microspotlight/openharness-find-plugin/lib/index.js";
+let findPlugin = read(findPluginPath);
+findPlugin = replaceOnce(
+  findPlugin,
+  `const SNAPSHOT_FILES = [
+\t"package.json",
+\t"pnpm-lock.yaml",
+\t"cordis.patch.yml"
+];`,
+  `const SNAPSHOT_FILES = [
+\t"package.json",
+\t"pnpm-lock.yaml",
+\t"pnpm-workspace.yaml",
+\t"cordis.patch.yml"
+];`,
+  "Find Plugin rollback snapshot",
+);
+findPlugin = replaceOnce(
+  findPlugin,
+  `\tVERSION_NOT_UPGRADABLE: 409,
+\tRUNTIME_NOT_READY: 503,`,
+  `\tVERSION_NOT_UPGRADABLE: 409,
+\tPROFILE_INCOMPATIBLE: 409,
+\tRUNTIME_NOT_READY: 503,`,
+  "Find Plugin profile compatibility status",
+);
+findPlugin = replaceOnce(
+  findPlugin,
+  `\t\tif (plugin.version !== request.version) throw new HostError("CATALOG_REVISION_CHANGED", "Catalog version changed; refresh and confirm again");
+\t\tconst records = await this.installed.records();`,
+  `\t\tif (plugin.version !== request.version) throw new HostError("CATALOG_REVISION_CHANGED", "Catalog version changed; refresh and confirm again");
+\t\tconst environment = await this.runtime.environment();
+\t\tif (!plugin.compatibility.profiles.includes(environment.profileName)) throw new HostError("PROFILE_INCOMPATIBLE", \`plugin does not support the \${environment.profileName} profile\`);
+\t\tconst records = await this.installed.records();`,
+  "Find Plugin profile compatibility guard",
+);
+findPlugin = replaceOnce(
+  findPlugin,
+  `\t\tif (result.exitCode !== 0) throw new HostError("PACKAGE_COMMAND_FAILED", result.stderr || "DSH plugin command failed");`,
+  `\t\tif (result.exitCode !== 0) throw new HostError("PACKAGE_COMMAND_FAILED", [result.stderr, result.stdout].filter(Boolean).join("\\n") || "DSH plugin command failed");`,
+  "Find Plugin package error detail",
+);
+findPlugin = replaceOnce(
+  findPlugin,
+  `\t\tif (result.exitCode !== 0) throw new Error(result.stderr || "profile dependency restoration failed");
+\t\tthis.installed.verifyComposition();`,
+  `\t\tif (result.exitCode !== 0) throw new Error(result.stderr || "profile dependency restoration failed");
+\t\tawait snapshot.restore();
+\t\tthis.installed.verifyComposition();`,
+  "Find Plugin exact rollback restoration",
+);
+write(findPluginPath, findPlugin);
+
 console.log(">> OpenHarness runtime branding applied");

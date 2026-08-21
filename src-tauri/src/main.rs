@@ -611,6 +611,11 @@ fn spawn_harness(
         .env("OPENHARNESS_RUNTIME_ROOT", &runtime.root)
         .env("OPENHARNESS_NODE_PATH", &runtime.node)
         .env("OPENHARNESS_DSH_ENTRY", &runtime.dsh_entry)
+        .env("OPENHARNESS_PATCH_PATH", &runtime.patch)
+        .env(
+            "OPENHARNESS_FIND_PLUGIN_PATCH_PATH",
+            &runtime.find_plugin_patch,
+        )
         .env(
             "OPENHARNESS_PACKAGE_MANAGER_BIN",
             &runtime.package_manager_bin,
