@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "id": "ipollowork.deepseek-harness.design",
+  "version": "1.0.0",
+  "kind": "design",
+  "category": "site",
+  "subcategory": "website",
+  "style": "minimal",
+  "tags": [
+    "deepseek-harness",
+    "studio"
+  ],
+  "surface": "design",
+  "title": "DeepSeek iDesign",
+  "description": "An editable DeepSeek iDesign document hosted by DeepSeek Harness.",
+  "cover": "index.html",
+  "entry": "index.html",
+  "source": {
+    "name": "iPolloWork",
+    "license": "MIT"
+  },
+  "designSystem": {
+    "tokenVersion": 1,
+    "editableGroups": [
+      "theme",
+      "background",
+      "typography",
+      "components"
+    ],
+    "tokens": "design-tokens.css",
+    "variables": []
+  },
+  "applyChecklist": [
+    "Preserve the current document structure and linked design token contract."
+  ],
+  "minimumAppVersion": "0.21.2"
+}

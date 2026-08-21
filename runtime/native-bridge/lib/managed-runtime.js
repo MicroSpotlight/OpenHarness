@@ -1,4 +1,4 @@
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { spawn } from "node:child_process";
@@ -10,8 +10,10 @@ export const MANAGED_RESTART_EXIT_CODE = 75;
 const STDOUT_LIMIT = 256 * 1024;
 const STDERR_LIMIT = 64 * 1024;
 const MAX_OPERATION_DURATION_MS = 10 * 60 * 1_000;
+const PROFILE_STARTUP_TIMEOUT_MS = 30 * 1_000;
 const MAX_ARGUMENTS = 64;
 const MAX_ARGUMENT_BYTES = 32 * 1024;
+const FIND_PLUGIN_PACKAGE = "@microspotlight/openharness-find-plugin";
 
 export class ManagedRuntimeError extends Error {
   constructor(code, message) {
@@ -71,12 +73,23 @@ export function readManagedRuntimeEnvironment(
     environment,
     "OPENHARNESS_PACKAGE_MANAGER_BIN",
   );
+  const patchPath = requireAbsolutePath(environment, "OPENHARNESS_PATCH_PATH");
+  const findPluginPatchPath = requireAbsolutePath(
+    environment,
+    "OPENHARNESS_FIND_PLUGIN_PATCH_PATH",
+  );
   const expectedProfileDirectory = resolve(dshHome, "profiles", profileName);
 
   if (profileDirectory !== expectedProfileDirectory) {
     throw new ManagedRuntimeError("RUNTIME_NOT_READY", "managed profile directory is inconsistent");
   }
-  for (const path of [nodePath, dshEntry, packageManagerBinDirectory]) {
+  for (const path of [
+    nodePath,
+    dshEntry,
+    packageManagerBinDirectory,
+    patchPath,
+    findPluginPatchPath,
+  ]) {
     if (!isWithin(runtimeRoot, path)) {
       throw new ManagedRuntimeError("RUNTIME_NOT_READY", "managed executable escaped runtime root");
     }
@@ -96,6 +109,8 @@ export function readManagedRuntimeEnvironment(
     runtimeRoot,
     nodePath,
     dshEntry,
+    patchPath,
+    findPluginPatchPath,
     packageManagerBinDirectory,
     packageManagerLauncher: join(
       packageManagerBinDirectory,
@@ -242,6 +257,141 @@ function appendBounded(chunks, currentBytes, chunk, limit) {
   return { bytes: currentBytes + value.length, overflowed: false };
 }
 
+function isPluginAdd(args, profileName) {
+  return (
+    args.length === 5 &&
+    args[0] === "--profile" &&
+    args[1] === profileName &&
+    args[2] === "add" &&
+    args[3] === "--save-exact"
+  );
+}
+
+async function profileStartupArguments(configuration) {
+  let hasFindPlugin = false;
+  try {
+    const manifest = JSON.parse(
+      await readFile(join(configuration.profileDirectory, "package.json"), "utf8"),
+    );
+    hasFindPlugin = manifest?.dsh?.profile?.bundles?.includes(FIND_PLUGIN_PACKAGE) === true;
+  } catch {
+    // Let DSH report the invalid or missing profile with its normal startup error.
+  }
+  return [
+    "--profile",
+    configuration.profileName,
+    "--patch",
+    configuration.patchPath,
+    ...(hasFindPlugin ? [] : ["--patch", configuration.findPluginPatchPath]),
+    "--port",
+    "0",
+  ];
+}
+
+function containsLoopbackStartupUrl(output) {
+  const marker = "dsh web: ";
+  const start = output.indexOf(marker);
+  if (start === -1) return false;
+  const candidate = output.slice(start + marker.length).split(/\s/, 1)[0];
+  try {
+    const url = new URL(candidate);
+    return (
+      url.protocol === "http:" &&
+      url.port !== "" &&
+      url.username === "" &&
+      url.password === "" &&
+      (url.hostname === "localhost" ||
+        url.hostname === "127.0.0.1" ||
+        url.hostname === "[::1]")
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function probeProfileStartup(configuration, options) {
+  const { active, environment, platform, spawnProcess } = options;
+  if (active.error !== undefined) throw active.error;
+
+  const args = await profileStartupArguments(configuration);
+  if (active.error !== undefined) throw active.error;
+
+  let child;
+  try {
+    child = spawnProcess(configuration.nodePath, [configuration.dshEntry, ...args], {
+      cwd: configuration.dshHome,
+      env: executableEnvironment(configuration, environment),
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: false,
+      detached: platform !== "win32",
+      windowsHide: true,
+    });
+  } catch {
+    return { ready: false, detail: "failed to start the updated profile" };
+  }
+  active.child = child;
+
+  return new Promise((resolveResult) => {
+    const stdout = [];
+    const stderr = [];
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let startupReady = false;
+    let outputExceeded = false;
+    let timedOut = false;
+
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      terminateProcessTree(child, platform, spawnProcess);
+    }, PROFILE_STARTUP_TIMEOUT_MS);
+    timeout.unref();
+
+    child.stdout.on("data", (chunk) => {
+      const result = appendBounded(stdout, stdoutBytes, chunk, STDERR_LIMIT);
+      stdoutBytes = result.bytes;
+      if (result.overflowed) {
+        outputExceeded = true;
+        terminateProcessTree(child, platform, spawnProcess);
+        return;
+      }
+      if (!startupReady && containsLoopbackStartupUrl(Buffer.concat(stdout).toString("utf8"))) {
+        startupReady = true;
+        terminateProcessTree(child, platform, spawnProcess);
+      }
+    });
+    child.stderr.on("data", (chunk) => {
+      const result = appendBounded(stderr, stderrBytes, chunk, STDERR_LIMIT);
+      stderrBytes = result.bytes;
+      if (result.overflowed) {
+        outputExceeded = true;
+        terminateProcessTree(child, platform, spawnProcess);
+      }
+    });
+    child.once("error", () => {
+      clearTimeout(timeout);
+      resolveResult({ ready: false, detail: "failed to start the updated profile" });
+    });
+    child.once("close", (exitCode, exitSignal) => {
+      clearTimeout(timeout);
+      if (startupReady) {
+        resolveResult({ ready: true });
+        return;
+      }
+      const detail = Buffer.concat(stderr).toString("utf8").trim() ||
+        Buffer.concat(stdout).toString("utf8").trim();
+      resolveResult({
+        ready: false,
+        detail: outputExceeded
+          ? "updated profile startup output exceeded the safety limit"
+          : timedOut
+            ? "updated profile did not start within 30 seconds"
+            : detail ||
+              `updated profile exited before startup (${exitCode ?? exitSignal ?? "unknown"})`,
+      });
+    });
+  });
+}
+
 export class ManagedRuntimeExecutor {
   constructor(configuration, options = {}) {
     this.configuration = configuration;
@@ -323,7 +473,7 @@ export class ManagedRuntimeExecutor {
       const failAndTerminate = (error) => {
         if (active.error !== undefined) return;
         active.error = error;
-        terminateProcessTree(child, this.platform, this.spawnProcess);
+        terminateProcessTree(active.child, this.platform, this.spawnProcess);
       };
       const onAbort = () => {
         failAndTerminate(
@@ -368,19 +518,46 @@ export class ManagedRuntimeExecutor {
           "failed to start the package operation",
         );
       });
-      child.once("close", (exitCode, exitSignal) => {
-        clearTimeout(timeout);
-        signal.removeEventListener("abort", onAbort);
-        this.active = undefined;
+      child.once("close", async (exitCode, exitSignal) => {
         if (active.error !== undefined) {
+          clearTimeout(timeout);
+          signal.removeEventListener("abort", onAbort);
+          this.active = undefined;
           rejectResult(active.error);
           return;
         }
-        resolveResult({
+        const result = {
           exitCode: exitCode ?? (exitSignal === null ? 1 : 128),
           stdout: Buffer.concat(stdout).toString("utf8"),
           stderr: Buffer.concat(stderr).toString("utf8"),
-        });
+        };
+        if (result.exitCode === 0 && isPluginAdd(args, this.configuration.profileName)) {
+          reportProgress(onProgress, { phase: "verifying" });
+          try {
+            const startup = await probeProfileStartup(this.configuration, {
+              active,
+              environment: this.inheritedEnvironment,
+              platform: this.platform,
+              spawnProcess: this.spawnProcess,
+            });
+            if (!startup.ready) {
+              result.exitCode = 1;
+              result.stderr = [
+                result.stderr.trim(),
+                `OpenHarness startup check failed: ${startup.detail}`,
+              ].filter(Boolean).join("\n");
+            }
+          } catch (error) {
+            active.error ??= error instanceof ManagedRuntimeError
+              ? error
+              : new ManagedRuntimeError("RUNTIME_NOT_READY", "profile startup check failed");
+          }
+        }
+        clearTimeout(timeout);
+        signal.removeEventListener("abort", onAbort);
+        this.active = undefined;
+        if (active.error !== undefined) rejectResult(active.error);
+        else resolveResult(result);
       });
     });
   }

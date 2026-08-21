@@ -33,7 +33,8 @@
     "test:build-number": "node --test scripts/build-tauri.test.mjs",
     "test:update-manifest": "node --test scripts/update-manifest.test.mjs",
     "test:setup-runtime": "node --test scripts/setup-runtime.test.mjs",
-    "test:managed-runtime": "node --test scripts/managed-runtime.test.mjs"
+    "test:managed-runtime": "node --test scripts/managed-runtime.test.mjs",
+    "audit:plugin-installations": "node scripts/plugin-install-audit.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0"

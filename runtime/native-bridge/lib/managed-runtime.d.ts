@@ -23,12 +23,18 @@ export interface ManagedRuntimeConfiguration {
   readonly runtimeRoot: string;
   readonly nodePath: string;
   readonly dshEntry: string;
+  readonly patchPath: string;
+  readonly findPluginPatchPath: string;
   readonly packageManagerBinDirectory: string;
   readonly packageManagerLauncher: string;
   readonly restartExitCode: 75;
 }
 
-export type ManagedInstallProgressPhase = "resolving" | "downloading" | "linking";
+export type ManagedInstallProgressPhase =
+  | "resolving"
+  | "downloading"
+  | "linking"
+  | "verifying";
 
 export interface ManagedInstallProgressEvent {
   readonly phase: ManagedInstallProgressPhase;
