@@ -19,6 +19,16 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const NODE_VERSION = "v24.19.0";
+
+// Windows resolves most file APIs against MAX_PATH, and the NSIS bundler reads
+// every runtime file through them. A dependency tree that nests deeply enough
+// is therefore fine on macOS and Linux but aborts the Windows installer, so
+// budget bundled paths against the installation prefix rather than the local
+// build prefix.
+const WINDOWS_MAX_PATH = 260;
+const WINDOWS_INSTALL_PREFIX_RESERVE = 80;
+export const MAX_BUNDLED_PATH_LENGTH = WINDOWS_MAX_PATH - WINDOWS_INSTALL_PREFIX_RESERVE;
+
 const PROJECT_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const RUNTIME_DIR = join(PROJECT_ROOT, "src-tauri", "runtime");
 const DSH_DIR = join(RUNTIME_DIR, "dsh");
@@ -226,6 +236,12 @@ export function incompatibleNativeArtifactPaths(target) {
   ];
 }
 
+export function oversizedBundledPaths(relativePaths, limit = MAX_BUNDLED_PATH_LENGTH) {
+  return relativePaths
+    .filter((path) => path.length > limit)
+    .sort((left, right) => right.length - left.length);
+}
+
 export function requiredPortableRuntimeFiles() {
   return [
     "openharness.patch.yml",
@@ -265,6 +281,17 @@ async function verifyRuntime(target, nodePath) {
     if (!(await directoryExists(absolute)) || (await collectFiles(absolute)).length === 0) {
       throw new Error(`Bundled native package is missing for ${target.key}: ${packagePath}`);
     }
+  }
+
+  const bundledPaths = (await collectFiles(DSH_DIR)).map((file) =>
+    relative(DSH_DIR, file).replaceAll("\\", "/"),
+  );
+  const oversized = oversizedBundledPaths(bundledPaths);
+  if (oversized.length > 0) {
+    throw new Error(
+      `${oversized.length} bundled runtime path(s) exceed the ${MAX_BUNDLED_PATH_LENGTH}-character ` +
+        `Windows budget and would abort the NSIS installer; longest (${oversized[0].length}): ${oversized[0]}`,
+    );
   }
 
   const dshManifestPath = join(

@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  MAX_BUNDLED_PATH_LENGTH,
   incompatibleNativeArtifactPaths,
   nativePackagePaths,
+  oversizedBundledPaths,
   requiredPortableRuntimeFiles,
   resolveRuntimeTarget,
 } from "./setup-runtime.mjs";
@@ -50,6 +52,36 @@ test("requires the target-specific node-pty prebuild on every platform", () => {
       nativePackagePaths(target).includes(`node-pty/prebuilds/${target.os}-${target.cpu}`),
     );
   }
+});
+
+test("rejects the nested runtime paths that abort the Windows installer", () => {
+  // The tree that broke the v0.1.1-beta.0 Windows build: conflicting upstream
+  // ranges made Bun nest node_modules until NSIS could no longer open a file.
+  const nested =
+    "node_modules/@deepseek-ai/dsh-client-locale/" +
+    "node_modules/@deepseek-ai/dsh-api-remotes/" +
+    "node_modules/@deepseek-ai/dsh-cordis-host-runner/" +
+    "node_modules/@deepseek-ai/dsh-tools/" +
+    "node_modules/@deepseek-ai/dsh-system-prompt/LICENSE";
+  const flat = "node_modules/@deepseek-ai/dsh-system-prompt/LICENSE";
+
+  assert.deepEqual(oversizedBundledPaths([flat]), []);
+  assert.deepEqual(oversizedBundledPaths([flat, nested]), [nested]);
+});
+
+test("reports the longest offending bundled path first", () => {
+  const longer = `node_modules/${"a".repeat(MAX_BUNDLED_PATH_LENGTH)}/index.js`;
+  const shorter = `node_modules/${"b".repeat(MAX_BUNDLED_PATH_LENGTH - 10)}/index.js`;
+  assert.deepEqual(oversizedBundledPaths([shorter, longer]), [longer, shorter]);
+});
+
+test("bundled path budget leaves room for the Windows installation prefix", () => {
+  // Bundled from `<checkout>\src-tauri\runtime\dsh\` and installed under
+  // `<programs>\OpenHarness\resources\runtime\dsh\`; the installed prefix is
+  // the longer of the two because it carries the user's account name.
+  const installPrefix =
+    "C:\\Users\\a-fairly-long-account\\AppData\\Local\\OpenHarness\\resources\\runtime\\dsh\\";
+  assert.ok(installPrefix.length + MAX_BUNDLED_PATH_LENGTH <= 260);
 });
 
 test("requires the plugin discovery and package manager runtime files", () => {

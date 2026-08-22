@@ -97,12 +97,17 @@ change also requires the relevant Tauri build or CI job.
    changes, not only API or type changes.
 2. Update the exact `@deepseek-ai/dsh` version in `runtime/package.json` and
    regenerate `runtime/bun.lock` with Bun.
-3. Rebuild or validate the managed runtime with `bun run setup:runtime`.
-4. Verify OpenHarness branding, startup URL detection, Native Bridge loading,
+3. Re-derive the `overrides` block in `runtime/package.json`. Upstream packages
+   that still pin an older `0.1.x-rc` range resolve to nested copies, and the
+   resulting `node_modules` depth breaks the Windows installer long before it
+   breaks anything else. Pin every duplicated `@deepseek-ai/dsh-*` package to
+   the release being adopted, and drop entries upstream has since aligned.
+4. Rebuild or validate the managed runtime with `bun run setup:runtime`.
+5. Verify OpenHarness branding, startup URL detection, Native Bridge loading,
    plugin discovery, and the no-external-browser invariant.
-5. Run all JavaScript and Rust tests. For meaningful Web UI changes, perform an
+6. Run all JavaScript and Rust tests. For meaningful Web UI changes, perform an
    isolated real-runtime smoke test in addition to unit tests.
-6. Commit only source manifests, lockfiles, patches, tests, and documentation;
+7. Commit only source manifests, lockfiles, patches, tests, and documentation;
    do not commit `src-tauri/runtime/`.
 
 Prefer adapting the desktop launch contract to supported upstream flags. Keep
